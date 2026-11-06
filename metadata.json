@@ -1,0 +1,6 @@
+{
+  "name": "BOM Cnidaria — Práctica de Reconocimiento",
+  "description": "Entrenamiento interactivo de taxonomía, anatomía diagnóstica y reconocimiento en formol de Cnidaria para el examen práctico de Biología de Organismos Marinos (BOM).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
