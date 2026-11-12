@@ -5,7 +5,7 @@ export const ANNELIDA_FORAM_SPECIMENS: CnidariaSpecimen[] = [
     id: 'ficopomatus_enigmaticus',
     name: 'Ficopomatus enigmaticus',
     commonName: 'Poliqueto de arrecife de tubo calcáreo (EEIA)',
-    imageUrl: '/assets/aistudio/Ficopomatus_enigmaticus.jpg',
+    imageUrl: '/assets/aistudio/ficopomatus_enigmaticus.png',
     taxonomy: {
       phylum: 'Annelida',
       subphylum: 'Pleistoannelida',
@@ -43,7 +43,7 @@ export const ANNELIDA_FORAM_SPECIMENS: CnidariaSpecimen[] = [
     id: 'alitta_succinea',
     name: 'Alitta succinea',
     commonName: 'Gusano arenícola de fango / Nereídido común (Neanthes succinea)',
-    svgType: 'polychaete_errant',
+    imageUrl: '/assets/aistudio/alitta_succinea.png',
     taxonomy: {
       phylum: 'Annelida',
       subphylum: 'Pleistoannelida',
@@ -119,7 +119,7 @@ export const ANNELIDA_FORAM_SPECIMENS: CnidariaSpecimen[] = [
     id: 'nephtys_fluviatilis',
     name: 'Nephtys fluviatilis',
     commonName: 'Poliqueto de pala / Neftídido estuarino',
-    svgType: 'polychaete_errant',
+    imageUrl: '/assets/aistudio/Nephtys_fluviatilis.jpg',
     taxonomy: {
       phylum: 'Annelida',
       subphylum: 'Pleistoannelida',
@@ -157,7 +157,7 @@ export const ANNELIDA_FORAM_SPECIMENS: CnidariaSpecimen[] = [
     id: 'arenicola_marina',
     name: 'Arenicola marina',
     commonName: 'Gusano de los pescadores / Arenícola cavadora',
-    imageUrl: '/assets/aistudio/Arenicola_marina.jpg',
+    imageUrl: '/assets/aistudio/arenicola_marina.png',
     taxonomy: {
       phylum: 'Annelida',
       subphylum: 'Pleistoannelida',
@@ -351,7 +351,7 @@ export const ANNELIDA_FORAM_SPECIMENS: CnidariaSpecimen[] = [
     id: 'globigerina_bulloides',
     name: 'Globigerina bulloides',
     commonName: 'Foraminífero planctónico globoso / Globigerina',
-    imageUrl: '/assets/aistudio/Globigerina_bulloides.jpg',
+    imageUrl: '/assets/aistudio/Globigerina_bulloides.png',
     taxonomy: {
       phylum: 'Sarcomastigophora',
       subphylum: 'Sarcodina',

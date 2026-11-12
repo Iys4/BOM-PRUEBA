@@ -6,17 +6,20 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Check,
-  AlertCircle,
   ArrowRight,
   ArrowLeft,
-  HelpCircle,
   RotateCcw,
   Eye,
-  Dna,
-  ExternalLink,
   ChevronDown,
   Maximize2,
   X,
+  BookOpen,
+  Trophy,
+  Layers,
+  Lock,
+  History,
+  Play,
+  ListFilter,
 } from 'lucide-react';
 import {
   ALL_BOM_SPECIMENS,
@@ -26,15 +29,19 @@ import {
   TaxonRankKey,
   TaxonRankInfo,
 } from './data/cnidariaDataset';
-import { SpecimenSvgDiagram } from './components/SpecimenSvgDiagram';
-import { queryNcbiSequencesForTaxon, NcbiOrganismData } from './utils/ncbiLookup';
+import { EncyclopediaView } from './components/EncyclopediaView';
 
-interface ShuffledOrganOption {
+interface QuizRecord {
   id: string;
-  name: string;
-  isTrueOrgan: boolean;
-  feedbackText: string;
+  date: string;
+  score: number;
+  accuracy: number;
+  specimensCount: number;
+  ranksGuessed: number;
 }
+
+type AppScreen = 'home' | 'jugar_menu' | 'quiz' | 'encyclopedia' | 'results';
+type QuizType = 'random10' | 'byOrder' | 'all';
 
 type PhylumFilter =
   | 'ALL'
@@ -44,7 +51,8 @@ type PhylumFilter =
   | 'Arthropoda'
   | 'Ctenophora'
   | 'Chaetognatha'
-  | 'Sarcomastigophora';
+  | 'Sarcomastigophora'
+  | 'Bryozoa';
 
 interface PhylumOption {
   value: PhylumFilter;
@@ -65,15 +73,8 @@ const PHYLA_OPTIONS: PhylumOption[] = [
     shortLabel: 'Foraminifera',
     menuLabel: 'Sarcomastigophora (Foraminifera)',
   },
+  { value: 'Bryozoa', shortLabel: 'Bryozoa', menuLabel: 'Bryozoa (Ectoprocta)' },
 ];
-
-function resolveAssetUrl(url?: string): string | undefined {
-  if (!url) return undefined;
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  const clean = url.startsWith('/') ? url.slice(1) : url;
-  const base = import.meta.env.BASE_URL || '/';
-  return `${base.endsWith('/') ? base : `${base}/`}${clean}`;
-}
 
 function shuffleArray<T>(items: T[]): T[] {
   const copy = [...items];
@@ -85,28 +86,33 @@ function shuffleArray<T>(items: T[]): T[] {
 }
 
 export default function App() {
+  const [screen, setScreen] = useState<AppScreen>('home');
+  const [quizType, setQuizType] = useState<QuizType>('all');
+  const [selectedOrderName, setSelectedOrderName] = useState<string>('');
+  const [isOrderPopupOpen, setIsOrderPopupOpen] = useState<boolean>(false);
+
+  // Active specimens pool
+  const [activePool, setActivePool] = useState<CnidariaSpecimen[]>(() => ALL_BOM_SPECIMENS);
+  const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [phylumFilter, setPhylumFilter] = useState<PhylumFilter>('ALL');
   const [isPhylumMenuOpen, setIsPhylumMenuOpen] = useState<boolean>(false);
-  const [specimenOrder] = useState<CnidariaSpecimen[]>(() =>
-    shuffleArray(ALL_BOM_SPECIMENS.filter((s) => Boolean(s.imageUrl))).concat(
-      shuffleArray(ALL_BOM_SPECIMENS.filter((s) => !s.imageUrl))
-    )
-  );
-  const [currentIndex, setCurrentIndex] = useState<number>(0);
-  const [useSecondaryPhoto, setUseSecondaryPhoto] = useState<boolean>(false);
-  const [imageError, setImageError] = useState<boolean>(false);
 
-  // Sticky thumbnail state when main image scrolls out of view
+  // Sticky thumbnail & image preview modal
   const specimenImageRef = useRef<HTMLDivElement>(null);
   const [isMainImageOutOfView, setIsMainImageOutOfView] = useState<boolean>(false);
   const [isThumbnailExpanded, setIsThumbnailExpanded] = useState<boolean>(false);
 
-  // Game state
+  // Scoring and progress
   const [score, setScore] = useState<number>(0);
-  const [guessedRanks, setGuessedRanks] = useState<Record<string, boolean>>({});
+  const [sessionGuessedRanksCount, setSessionGuessedRanksCount] = useState<number>(0);
+  const [sessionRevealedRanksCount, setSessionRevealedRanksCount] = useState<number>(0);
+
+  // Persistent memory across specimens within the session
+  const [guessedBySpecId, setGuessedBySpecId] = useState<Record<string, Record<string, boolean>>>({});
+  const [revealedBySpecId, setRevealedBySpecId] = useState<Record<string, Record<string, boolean>>>({});
   const [lastElevatedRank, setLastElevatedRank] = useState<TaxonRankKey | null>(null);
 
-  // Top general predictive input state
+  // Predictive inputs state
   const [taxInput, setTaxInput] = useState<string>('');
   const [activeSuggestionIdx, setActiveSuggestionIdx] = useState<number>(0);
   const [showSuggestions, setShowSuggestions] = useState<boolean>(false);
@@ -119,37 +125,54 @@ export default function App() {
   // Per-rank filtered input state
   const [rankInputs, setRankInputs] = useState<Partial<Record<TaxonRankKey, string>>>({});
   const [focusedRankKey, setFocusedRankKey] = useState<TaxonRankKey | null>(null);
-  const [rankSuggestionIdx, setRankSuggestionIdx] = useState<number>(0);
   const [shakingRankKey, setShakingRankKey] = useState<TaxonRankKey | null>(null);
 
-  // Phase 2 & 3 state
-  const [organsUnlockedManually, setOrgansUnlockedManually] = useState<boolean>(false);
-  const [selectedTrueOrgans, setSelectedTrueOrgans] = useState<Record<string, boolean>>({});
-  const [clickedDistractors, setClickedDistractors] = useState<Record<string, boolean>>({});
-  const [shakingOrganName, setShakingOrganName] = useState<string | null>(null);
-  const [organFeedback, setOrganFeedback] = useState<{
-    type: 'correct' | 'incorrect';
-    title: string;
-    detail: string;
-  } | null>(null);
-
-  // Optional NCBI Molecular data in Phase 3
-  const [ncbiData, setNcbiData] = useState<NcbiOrganismData | null>(null);
-  const [ncbiLoading, setNcbiLoading] = useState<boolean>(false);
-  const [ncbiError, setNcbiError] = useState<string | null>(null);
+  // Local storage history of quiz rounds
+  const [quizRecords, setQuizRecords] = useState<QuizRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem('bom_quiz_records');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
   const inputRef = useRef<HTMLInputElement>(null);
   const menuContainerRef = useRef<HTMLDivElement>(null);
 
-  const filteredSpecimens = useMemo(() => {
-    if (phylumFilter === 'ALL') return specimenOrder;
-    return specimenOrder.filter((s) => s.taxonomy.phylum === phylumFilter);
-  }, [specimenOrder, phylumFilter]);
+  // Compute unique orders across all specimens
+  const uniqueOrders = useMemo(() => {
+    const map = new Map<string, { order: string; phylum: string }>();
+    for (const s of ALL_BOM_SPECIMENS) {
+      const ord = s.taxonomy.order || s.taxonomy.subclass || s.taxonomy.class;
+      if (ord && !map.has(ord)) {
+        map.set(ord, { order: ord, phylum: s.taxonomy.phylum });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.order.localeCompare(b.order));
+  }, []);
+
+  // Filtered pool when in practice mode with phylum filter
+  const currentFilteredList = useMemo(() => {
+    if (quizType !== 'all') return activePool;
+    if (phylumFilter === 'ALL') return activePool;
+    return activePool.filter((s) => s.taxonomy.phylum === phylumFilter);
+  }, [activePool, phylumFilter, quizType]);
 
   const currentSpecimen: CnidariaSpecimen =
-    filteredSpecimens[currentIndex % filteredSpecimens.length] || ALL_BOM_SPECIMENS[0];
+    currentFilteredList[currentIndex % currentFilteredList.length] || ALL_BOM_SPECIMENS[0];
 
-  // Observe when the main specimen image scrolls out of view to show the mini sticky reference top-left
+  const guessedRanks = useMemo(
+    () => guessedBySpecId[currentSpecimen.id] || {},
+    [guessedBySpecId, currentSpecimen.id]
+  );
+
+  const revealedRanks = useMemo(
+    () => revealedBySpecId[currentSpecimen.id] || {},
+    [revealedBySpecId, currentSpecimen.id]
+  );
+
+  // Observe main image scroll for sticky preview
   useEffect(() => {
     const el = specimenImageRef.current;
     if (!el) return;
@@ -161,9 +184,9 @@ export default function App() {
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [currentSpecimen.id]);
+  }, [currentSpecimen?.id, screen]);
 
-  // Close phylum dropdown when clicking outside
+  // Click outside to close phylum menu
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (menuContainerRef.current && !menuContainerRef.current.contains(e.target as Node)) {
@@ -174,58 +197,28 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Build randomized organ buttons for current specimen
-  const organOptions: ShuffledOrganOption[] = useMemo(() => {
-    const trueOpts: ShuffledOrganOption[] = currentSpecimen.organs.map((o) => ({
-      id: `true_${o.name}`,
-      name: o.name,
-      isTrueOrgan: true,
-      feedbackText: o.description,
-    }));
-    const distractorOpts: ShuffledOrganOption[] = currentSpecimen.distractors.map((d) => ({
-      id: `dist_${d.name}`,
-      name: d.name,
-      isTrueOrgan: false,
-      feedbackText: d.reason,
-    }));
-    return shuffleArray([...trueOpts, ...distractorOpts]);
-  }, [currentSpecimen]);
-
-  // Unlock Phase 2 when species or genus is guessed, or manually unlocked
-  const isPhase2Unlocked =
-    Boolean(guessedRanks['species']) ||
-    Boolean(guessedRanks['genus']) ||
-    organsUnlockedManually;
-
-  // Unlock Phase 3 when all true organs of current specimen are selected
-  const totalTrueOrgans = currentSpecimen.organs.length;
-  const foundTrueOrgansCount = Object.keys(selectedTrueOrgans).length;
-  const isPhase3Complete = isPhase2Unlocked && foundTrueOrgansCount === totalTrueOrgans;
-
-  // Reset round state when specimen changes
-  const resetForSpecimen = () => {
-    setGuessedRanks({});
+  // Clear transient text inputs when switching specimens (while keeping guessedBySpecId & revealedBySpecId in memory)
+  useEffect(() => {
     setLastElevatedRank(null);
     setTaxInput('');
     setShowSuggestions(false);
     setInputFeedback(null);
     setRankInputs({});
     setFocusedRankKey(null);
-    setOrgansUnlockedManually(false);
-    setSelectedTrueOrgans({});
-    setClickedDistractors({});
-    setOrganFeedback(null);
-    setUseSecondaryPhoto(false);
-    setImageError(false);
     setIsThumbnailExpanded(false);
-    setNcbiData(null);
-    setNcbiLoading(false);
-    setNcbiError(null);
-  };
+  }, [currentSpecimen?.id]);
 
-  useEffect(() => {
-    resetForSpecimen();
-  }, [currentSpecimen.id]);
+  // Total answered categories for current specimen (guessed OR revealed)
+  const answeredRanksCount = useMemo(() => {
+    return currentSpecimen.ranks.filter((r) => guessedRanks[r.key] || revealedRanks[r.key]).length;
+  }, [currentSpecimen, guessedRanks, revealedRanks]);
+
+  // Minimum 3 categories required to advance in "Jugar" modes; free movement in "Practicar con todas"
+  const requiredRanksCount = useMemo(() => {
+    return Math.min(3, currentSpecimen.ranks.length);
+  }, [currentSpecimen]);
+
+  const canAdvance = quizType === 'all' ? true : answeredRanksCount >= requiredRanksCount;
 
   // General predictive autocomplete suggestions (threshold: 2 characters)
   const suggestions = useMemo(() => {
@@ -234,7 +227,7 @@ export default function App() {
 
     const alreadyGuessedNorms = new Set(
       currentSpecimen.ranks
-        .filter((r) => guessedRanks[r.key])
+        .filter((r) => guessedRanks[r.key] || revealedRanks[r.key])
         .flatMap((r) => [normalizeText(r.canonicalValue), ...r.acceptedAliases.map(normalizeText)])
     );
 
@@ -255,9 +248,9 @@ export default function App() {
     }
 
     return [...startsWithMatches, ...containsMatches].slice(0, 7);
-  }, [taxInput, currentSpecimen, guessedRanks]);
+  }, [taxInput, currentSpecimen, guessedRanks, revealedRanks]);
 
-  // Per-rank filtered suggestions (strictly filtered by `rankKey`)
+  // Per-rank filtered suggestions
   const getFilteredSuggestionsForRank = (rankKey: TaxonRankKey, rawQuery: string) => {
     const normQuery = normalizeText(rawQuery);
     if (normQuery.length < 1) return [];
@@ -293,7 +286,7 @@ export default function App() {
     setTimeout(() => setShakingRankKey(null), 400);
   };
 
-  // Validate a general taxonomic input (from the top bar under the image)
+  // Validate general taxonomic input
   const evaluateTaxonSubmission = (rawValue: string) => {
     const norm = normalizeText(rawValue);
     if (!norm) return;
@@ -307,7 +300,7 @@ export default function App() {
     });
 
     if (matchedRanks.length > 0) {
-      const newlyGuessed = matchedRanks.filter((r) => !guessedRanks[r.key]);
+      const newlyGuessed = matchedRanks.filter((r) => !guessedRanks[r.key] && !revealedRanks[r.key]);
 
       const speciesMatched = matchedRanks.some((r) => r.key === 'species');
       const genusRank = currentSpecimen.ranks.find((r) => r.key === 'genus');
@@ -315,6 +308,7 @@ export default function App() {
         speciesMatched &&
         genusRank &&
         !guessedRanks['genus'] &&
+        !revealedRanks['genus'] &&
         !newlyGuessed.some((r) => r.key === 'genus');
 
       if (newlyGuessed.length === 0 && !autoCreditGenus) {
@@ -341,8 +335,12 @@ export default function App() {
         pointsEarned += 100;
       }
 
-      setGuessedRanks(updated);
+      setGuessedBySpecId((prev) => ({
+        ...prev,
+        [currentSpecimen.id]: updated,
+      }));
       setScore((prev) => prev + pointsEarned);
+      setSessionGuessedRanksCount((prev) => prev + newlyGuessed.length + (autoCreditGenus ? 1 : 0));
       setTaxInput('');
       setShowSuggestions(false);
 
@@ -358,7 +356,7 @@ export default function App() {
       return;
     }
 
-    // Did not match current specimen (no "Sin penalización" text per user instructions)
+    // Did not match
     triggerInputShake();
     const otherSuggestion = ALL_TAXONOMIC_SUGGESTIONS.find((s) => s.normalized === norm);
     if (otherSuggestion) {
@@ -374,7 +372,7 @@ export default function App() {
     }
   };
 
-  // Validate a rank-specific input (inside the Grupo Taxonómico grid)
+  // Validate specific rank row input
   const evaluateSpecificRankSubmission = (rank: TaxonRankInfo, rawValue: string) => {
     const norm = normalizeText(rawValue);
     if (!norm) return;
@@ -387,17 +385,20 @@ export default function App() {
       const updated = { ...guessedRanks, [rank.key]: true };
       let pointsEarned = 100;
 
-      // If user entered the species in the Species box, also credit Genus if unguessed
       const genusRank = currentSpecimen.ranks.find((r) => r.key === 'genus');
       const autoCreditGenus =
-        rank.key === 'species' && genusRank && !guessedRanks['genus'];
+        rank.key === 'species' && genusRank && !guessedRanks['genus'] && !revealedRanks['genus'];
       if (autoCreditGenus) {
         updated['genus'] = true;
         pointsEarned += 100;
       }
 
-      setGuessedRanks(updated);
+      setGuessedBySpecId((prev) => ({
+        ...prev,
+        [currentSpecimen.id]: updated,
+      }));
       setScore((prev) => prev + pointsEarned);
+      setSessionGuessedRanksCount((prev) => prev + (autoCreditGenus ? 2 : 1));
       setLastElevatedRank(rank.key);
       setRankInputs((prev) => ({ ...prev, [rank.key]: '' }));
       setFocusedRankKey(null);
@@ -441,6 +442,130 @@ export default function App() {
     evaluateTaxonSubmission(taxInput);
   };
 
+  // Reveal a rank (no point penalty, just doesn't award points)
+  const handleRevealRank = (rank: TaxonRankInfo) => {
+    if (guessedRanks[rank.key] || revealedRanks[rank.key]) return;
+    setRevealedBySpecId((prev) => ({
+      ...prev,
+      [currentSpecimen.id]: {
+        ...(prev[currentSpecimen.id] || {}),
+        [rank.key]: true,
+      },
+    }));
+    setSessionRevealedRanksCount((prev) => prev + 1);
+    setInputFeedback({
+      type: 'info',
+      message: `${rank.label}: ${rank.canonicalValue}`,
+    });
+  };
+
+  // Start 10-species random session
+  const startRandom10Session = () => {
+    const shuffled = shuffleArray([...ALL_BOM_SPECIMENS]).slice(0, 10);
+    setActivePool(shuffled);
+    setCurrentIndex(0);
+    setQuizType('random10');
+    setScore(0);
+    setGuessedBySpecId({});
+    setRevealedBySpecId({});
+    setSessionGuessedRanksCount(0);
+    setSessionRevealedRanksCount(0);
+    setIsOrderPopupOpen(false);
+    setScreen('quiz');
+  };
+
+  // Start Order session
+  const startOrderSession = (orderName: string) => {
+    const matching = shuffleArray(
+      ALL_BOM_SPECIMENS.filter(
+        (s) =>
+          s.taxonomy.order === orderName ||
+          s.taxonomy.subclass === orderName ||
+          s.taxonomy.class === orderName
+      )
+    );
+    if (matching.length === 0) return;
+    setActivePool(matching);
+    setCurrentIndex(0);
+    setSelectedOrderName(orderName);
+    setQuizType('byOrder');
+    setScore(0);
+    setGuessedBySpecId({});
+    setRevealedBySpecId({});
+    setSessionGuessedRanksCount(0);
+    setSessionRevealedRanksCount(0);
+    setIsOrderPopupOpen(false);
+    setScreen('quiz');
+  };
+
+  // Start All Practice session
+  const startAllPracticeSession = () => {
+    setActivePool(shuffleArray([...ALL_BOM_SPECIMENS]));
+    setCurrentIndex(0);
+    setQuizType('all');
+    setPhylumFilter('ALL');
+    setScore(0);
+    setGuessedBySpecId({});
+    setRevealedBySpecId({});
+    setSessionGuessedRanksCount(0);
+    setSessionRevealedRanksCount(0);
+    setScreen('quiz');
+  };
+
+  // Finish 10-species session and save to localStorage
+  const finishRandom10Session = () => {
+    const totalGuessed = sessionGuessedRanksCount;
+    const totalRevealed = sessionRevealedRanksCount;
+    const totalRanks = totalGuessed + totalRevealed;
+    const accuracy = totalRanks > 0 ? Math.round((totalGuessed / totalRanks) * 100) : 100;
+
+    const newRecord: QuizRecord = {
+      id: Date.now().toString(),
+      date: new Date().toLocaleDateString('es-UY', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      score,
+      accuracy,
+      specimensCount: 10,
+      ranksGuessed: totalGuessed,
+    };
+
+    const updated = [newRecord, ...quizRecords].slice(0, 15);
+    setQuizRecords(updated);
+    try {
+      localStorage.setItem('bom_quiz_records', JSON.stringify(updated));
+    } catch {
+      // Ignore quota errors
+    }
+    setScreen('results');
+  };
+
+  // Handle advancing to next specimen
+  const handleNextSpecimen = () => {
+    if (!canAdvance) return;
+
+    if (quizType === 'random10') {
+      if (currentIndex + 1 >= 10) {
+        finishRandom10Session();
+        return;
+      }
+      setCurrentIndex((prev) => prev + 1);
+    } else {
+      setCurrentIndex((prev) => (prev + 1) % currentFilteredList.length);
+    }
+  };
+
+  const handlePrevSpecimen = () => {
+    setCurrentIndex((prev) =>
+      prev === 0 ? currentFilteredList.length - 1 : prev - 1
+    );
+  };
+
+  // Keyboard navigation
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!showSuggestions || suggestions.length === 0) return;
 
@@ -449,745 +574,600 @@ export default function App() {
       setActiveSuggestionIdx((prev) => (prev + 1) % suggestions.length);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setActiveSuggestionIdx((prev) => (prev - 1 + suggestions.length) % suggestions.length);
+      setActiveSuggestionIdx((prev) =>
+        prev <= 0 ? suggestions.length - 1 : prev - 1
+      );
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const chosen = suggestions[activeSuggestionIdx];
+      if (chosen) {
+        evaluateTaxonSubmission(chosen.display);
+      }
     } else if (e.key === 'Escape') {
       setShowSuggestions(false);
     }
   };
 
-  const handleGiveTaxonHint = () => {
-    const nextUnguessed = currentSpecimen.ranks.find((r) => !guessedRanks[r.key]);
-    if (!nextUnguessed) return;
-    setGuessedRanks((prev) => ({ ...prev, [nextUnguessed.key]: true }));
-    setLastElevatedRank(nextUnguessed.key);
-    setInputFeedback({
-      type: 'info',
-      message: `Pista revelada — ${nextUnguessed.label}: ${nextUnguessed.canonicalValue}`,
-    });
-  };
+  // Render Encyclopedia Screen
+  if (screen === 'encyclopedia') {
+    return <EncyclopediaView onBackToHome={() => setScreen('home')} />;
+  }
 
-  const handleRevealSpeciesAndOrgans = () => {
-    setGuessedRanks((prev) => ({
-      ...prev,
-      genus: true,
-      species: true,
-    }));
-    setOrgansUnlockedManually(true);
-    setLastElevatedRank('species');
-    setInputFeedback({
-      type: 'info',
-      message: `Especie revelada: ${currentSpecimen.name}. Selecciona ahora sus órganos diagnósticos.`,
-    });
-  };
+  // Render Results Screen (for 10 Species Exam)
+  if (screen === 'results') {
+    const latestRecord = quizRecords[0];
+    return (
+      <div className="min-h-screen bg-white flex flex-col justify-center items-center p-4 sm:p-6 text-slate-900">
+        <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 p-6 sm:p-8">
+          <div className="text-center mb-6">
+            <div className="w-14 h-14 bg-blue-50 border border-blue-200 rounded-2xl flex items-center justify-center mx-auto mb-3">
+              <Trophy className="w-7 h-7 text-blue-600" />
+            </div>
+            <h2 className="text-2xl font-black text-slate-900">Puntaje Final</h2>
+          </div>
 
-  const handleOrganClick = (option: ShuffledOrganOption) => {
-    if (option.isTrueOrgan) {
-      if (selectedTrueOrgans[option.name]) {
-        setOrganFeedback({
-          type: 'correct',
-          title: option.name,
-          detail: option.feedbackText,
-        });
-        return;
-      }
-      setSelectedTrueOrgans((prev) => ({ ...prev, [option.name]: true }));
-      setScore((prev) => prev + 50);
-      setOrganFeedback({
-        type: 'correct',
-        title: `+50 pts · ${option.name}`,
-        detail: option.feedbackText,
-      });
-    } else {
-      setClickedDistractors((prev) => ({ ...prev, [option.name]: true }));
-      setShakingOrganName(option.name);
-      setTimeout(() => setShakingOrganName(null), 380);
-      setOrganFeedback({
-        type: 'incorrect',
-        title: `Distractor: ${option.name}`,
-        detail: option.feedbackText,
-      });
-    }
-  };
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="p-4 rounded-xl bg-blue-50 border border-blue-100 text-center">
+              <div className="text-xs uppercase font-bold text-blue-600">Puntos</div>
+              <div className="text-3xl font-black text-blue-700 mt-1">{score}</div>
+            </div>
+            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100 text-center">
+              <div className="text-xs uppercase font-bold text-emerald-600">Exactitud</div>
+              <div className="text-3xl font-black text-emerald-700 mt-1">
+                {latestRecord?.accuracy ?? 100}%
+              </div>
+            </div>
+          </div>
 
-  const handlePrevSpecimen = () => {
-    setCurrentIndex(
-      (prev) => (prev - 1 + filteredSpecimens.length) % filteredSpecimens.length
+          {quizRecords.length > 1 && (
+            <div className="mb-6">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                <History className="w-3.5 h-3.5 text-slate-400" />
+                <span>Historial</span>
+              </div>
+              <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1 text-xs">
+                {quizRecords.slice(1, 6).map((rec) => (
+                  <div
+                    key={rec.id}
+                    className="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-200"
+                  >
+                    <span className="text-slate-500 font-mono">{rec.date}</span>
+                    <span className="font-bold text-slate-800">{rec.score} pts</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            <button
+              onClick={startRandom10Session}
+              className="w-full py-4 px-5 bg-[#2563EB] hover:bg-blue-700 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-3 text-lg"
+            >
+              <RotateCcw className="w-5 h-5" />
+              <span>Volver a jugar</span>
+            </button>
+            <button
+              onClick={() => setScreen('home')}
+              className="w-full py-4 px-5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl transition-colors flex items-center justify-center gap-3 text-lg"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              <span>Inicio</span>
+            </button>
+          </div>
+        </div>
+      </div>
     );
-  };
+  }
 
-  const handleNextSpecimen = () => {
-    setCurrentIndex((prev) => (prev + 1) % filteredSpecimens.length);
-  };
+  // Render Home Screen (Minimalist: Title "JUEGO BOM" + 3 stacked buttons)
+  if (screen === 'home') {
+    return (
+      <div className="min-h-screen bg-white text-slate-900 flex flex-col items-center justify-center px-4">
+        <div className="w-full max-w-md flex flex-col items-center">
+          <h1 className="text-4xl sm:text-5xl font-black text-slate-900 tracking-tight mb-10 text-center">
+            JUEGO BOM
+          </h1>
 
-  const handleLoadNcbiData = async () => {
-    setNcbiLoading(true);
-    setNcbiError(null);
-    try {
-      const result = await queryNcbiSequencesForTaxon(currentSpecimen.taxonomy.genus);
-      setNcbiData(result);
-    } catch {
-      setNcbiError('No se pudo conectar con NCBI E-utilities en este momento.');
-    } finally {
-      setNcbiLoading(false);
-    }
-  };
+          <div className="w-full space-y-4">
+            {/* 1. Blue button: Jugar */}
+            <button
+              onClick={() => setScreen('jugar_menu')}
+              className="w-full py-4 px-6 bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-lg sm:text-xl rounded-xl transition-colors flex items-center gap-4 text-left shadow-xs"
+            >
+              <Play className="w-6 h-6 fill-white shrink-0" />
+              <span>Jugar</span>
+            </button>
 
-  const totalRanksCount = currentSpecimen.ranks.length;
-  const guessedRanksCount = currentSpecimen.ranks.filter((r) => guessedRanks[r.key]).length;
-  const rawPhotoUrl =
-    useSecondaryPhoto && currentSpecimen.secondaryImageUrl
-      ? currentSpecimen.secondaryImageUrl
-      : currentSpecimen.imageUrl;
-  const activePhotoUrl = resolveAssetUrl(rawPhotoUrl);
+            {/* 2. Gray button: Enciclopedia */}
+            <button
+              onClick={() => setScreen('encyclopedia')}
+              className="w-full py-4 px-6 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 font-bold text-lg sm:text-xl rounded-xl transition-colors flex items-center gap-4 text-left"
+            >
+              <BookOpen className="w-6 h-6 text-slate-700 shrink-0" />
+              <span>Enciclopedia</span>
+            </button>
 
-  const activePhylumOption =
-    PHYLA_OPTIONS.find((p) => p.value === phylumFilter) || PHYLA_OPTIONS[0];
+            {/* 3. Gray button: Practicar con todas las especies */}
+            <button
+              onClick={startAllPracticeSession}
+              className="w-full py-4 px-6 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 font-bold text-lg sm:text-xl rounded-xl transition-colors flex items-center gap-4 text-left"
+            >
+              <Layers className="w-6 h-6 text-slate-700 shrink-0" />
+              <span>Practicar con todas las especies</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  return (
-    <div className="min-h-screen bg-white text-slate-900 flex flex-col">
-      {/* Floating Mini Sticky Image Reference on Top-Left when scrolling down */}
-      {isMainImageOutOfView && (
-        <div className="fixed top-2.5 left-3 z-40 flex items-start gap-2">
-          <button
-            type="button"
-            onClick={() => setIsThumbnailExpanded((prev) => !prev)}
-            title="Tocar para ampliar o reducir imagen de referencia"
-            className={`bg-white border-2 border-[#2563EB] shadow-lg rounded-xl overflow-hidden transition-all cursor-pointer relative flex items-center justify-center ${
-              isThumbnailExpanded ? 'w-56 h-56 sm:w-64 sm:h-64 p-2' : 'w-20 h-20 sm:w-24 sm:h-24 p-1'
-            }`}
+  // Render JUGAR Dedicated Page (Screen: 'jugar_menu')
+  if (screen === 'jugar_menu') {
+    return (
+      <div className="min-h-screen bg-white text-slate-900 flex flex-col">
+        <header className="px-4 py-4 sm:px-6">
+          <div className="max-w-md mx-auto">
+            <button
+              onClick={() => setScreen('home')}
+              className="p-2.5 -ml-2 rounded-xl text-slate-700 hover:bg-slate-100 transition-colors inline-flex items-center gap-2 font-bold text-base"
+            >
+              <ArrowLeft className="w-6 h-6" />
+            </button>
+          </div>
+        </header>
+
+        <div className="flex-1 flex flex-col items-center justify-center px-4 pb-16">
+          <div className="w-full max-w-md space-y-4">
+            {/* Highlighted Button: Jugar con 10 especies al azar */}
+            <button
+              onClick={startRandom10Session}
+              className="w-full py-4 px-6 bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-lg sm:text-xl rounded-xl transition-colors flex items-center gap-4 text-left shadow-xs"
+            >
+              <Play className="w-6 h-6 fill-white shrink-0" />
+              <span>Jugar con 10 especies al azar</span>
+            </button>
+
+            {/* Second Button: Jugar por orden */}
+            <button
+              onClick={() => setIsOrderPopupOpen(true)}
+              className="w-full py-4 px-6 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 font-bold text-lg sm:text-xl rounded-xl transition-colors flex items-center gap-4 text-left"
+            >
+              <ListFilter className="w-6 h-6 text-slate-700 shrink-0" />
+              <span>Jugar por orden</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Popup for selecting Order */}
+        {isOrderPopupOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+            onClick={() => setIsOrderPopupOpen(false)}
           >
-            {activePhotoUrl && !imageError ? (
-              <img
-                src={activePhotoUrl}
-                alt="Referencia de espécimen"
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-contain rounded-lg"
-              />
-            ) : (
-              <SpecimenSvgDiagram
-                svgType={currentSpecimen.svgType}
-                label={currentSpecimen.commonName}
-              />
-            )}
-            <span className="absolute bottom-1 right-1 bg-slate-900/75 text-white p-1 rounded-md">
-              {isThumbnailExpanded ? (
-                <X className="w-3.5 h-3.5" />
-              ) : (
-                <Maximize2 className="w-3.5 h-3.5" />
-              )}
-            </span>
-          </button>
+            <div
+              className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900">
+                  Jugar por orden
+                </h3>
+                <button
+                  onClick={() => setIsOrderPopupOpen(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-6 overflow-y-auto space-y-2.5">
+                {uniqueOrders.map((item) => (
+                  <button
+                    key={item.order}
+                    onClick={() => startOrderSession(item.order)}
+                    className="w-full py-3.5 px-5 rounded-xl bg-slate-50 border border-slate-200 hover:border-blue-600 hover:bg-blue-50 text-left transition-colors flex items-center justify-between"
+                  >
+                    <span className="font-bold text-slate-900 text-lg sm:text-xl">
+                      {item.order}
+                    </span>
+                    <span className="text-sm font-semibold text-slate-400">
+                      {item.phylum}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Render QUIZ Mode Screen
+  return (
+    <div className="min-h-screen bg-white text-slate-900 flex flex-col font-sans">
+      {/* Mini sticky photo top-left on scroll */}
+      {isMainImageOutOfView && currentSpecimen.imageUrl && (
+        <div className="fixed top-3 left-3 z-40 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div
+            onClick={() => setIsThumbnailExpanded(true)}
+            className="group relative cursor-pointer bg-white p-1 rounded-xl shadow-lg border border-slate-200 hover:border-blue-500 transition-all"
+            title="Click para ampliar imagen"
+          >
+            <img
+              src={currentSpecimen.imageUrl}
+              alt={currentSpecimen.name}
+              className="w-14 h-14 sm:w-16 sm:h-16 object-cover rounded-lg border border-slate-100"
+            />
+            <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 rounded-xl transition-opacity flex items-center justify-center">
+              <Maximize2 className="w-4 h-4 text-white drop-shadow-md" />
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Ultra-compact Header: Back Arrow (left) — Phylum Dropdown (center) — Score + Forward Arrow (right) */}
-      <header className="flex items-center justify-between gap-2 px-3 sm:px-6 py-2.5 border-b border-slate-200 bg-white relative z-30">
-        {/* Back Arrow Button (icon only) */}
-        <button
-          type="button"
-          onClick={handlePrevSpecimen}
-          aria-label="Espécimen anterior"
-          title="Espécimen anterior"
-          className="min-h-[48px] min-w-[48px] p-2.5 text-slate-800 bg-[#F8FAFC] hover:bg-slate-100 border border-slate-300 rounded-xl transition-colors shrink-0 cursor-pointer flex items-center justify-center"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-
-        {/* Phylum-only Dropdown Menu */}
-        <div ref={menuContainerRef} className="relative flex-1 max-w-[220px] sm:max-w-xs">
+      {/* Top Header Navigation */}
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-slate-200 px-3 sm:px-6 py-2.5">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-2">
+          {/* Back button */}
           <button
-            type="button"
-            onClick={() => setIsPhylumMenuOpen((prev) => !prev)}
-            className="w-full min-h-[48px] px-3 py-2 text-sm sm:text-base font-bold text-slate-900 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition-colors flex items-center justify-between gap-1.5 cursor-pointer"
+            onClick={() => setScreen(quizType === 'all' ? 'home' : 'jugar_menu')}
+            className="p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors flex items-center"
+            title="Volver"
           >
-            <span className="truncate">{activePhylumOption.shortLabel}</span>
-            <ChevronDown
-              className={`w-4 h-4 text-slate-500 shrink-0 transition-transform ${
-                isPhylumMenuOpen ? 'rotate-180' : ''
-              }`}
-            />
+            <ArrowLeft className="w-5 h-5" />
           </button>
 
-          {isPhylumMenuOpen && (
-            <div className="absolute left-0 right-0 sm:w-64 top-full mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl max-h-[75vh] overflow-y-auto z-50 p-1.5 space-y-1">
-              {PHYLA_OPTIONS.map((opt) => {
-                const isSelected = opt.value === phylumFilter;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => {
-                      setPhylumFilter(opt.value);
-                      setCurrentIndex(0);
-                      setIsPhylumMenuOpen(false);
-                    }}
-                    className={`w-full min-h-[44px] px-3 py-2 text-left text-sm sm:text-base rounded-lg flex items-center justify-between transition-colors cursor-pointer ${
-                      isSelected
-                        ? 'bg-[#2563EB] text-white font-semibold'
-                        : 'text-slate-800 hover:bg-slate-100 font-medium'
-                    }`}
-                  >
-                    <span>{opt.menuLabel}</span>
-                    {isSelected && <Check className="w-4 h-4 shrink-0" />}
-                  </button>
-                );
-              })}
+          {/* Mode & Progress badge */}
+          <div className="flex items-center gap-2">
+            {quizType === 'random10' && (
+              <span className="px-3 py-1 bg-slate-100 border border-slate-200 rounded-full text-slate-800 text-xs sm:text-sm font-bold font-mono">
+                {currentIndex + 1} / 10
+              </span>
+            )}
+            {quizType === 'byOrder' && (
+              <span className="px-3 py-1 bg-slate-100 border border-slate-200 rounded-full text-slate-800 text-xs sm:text-sm font-bold font-mono">
+                {selectedOrderName} ({currentIndex + 1}/{currentFilteredList.length})
+              </span>
+            )}
+            {quizType === 'all' && (
+              <div ref={menuContainerRef} className="relative">
+                <button
+                  onClick={() => setIsPhylumMenuOpen(!isPhylumMenuOpen)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-xs sm:text-sm font-bold text-slate-800 hover:bg-slate-200 transition-colors"
+                >
+                  <span>
+                    {PHYLA_OPTIONS.find((p) => p.value === phylumFilter)?.shortLabel || 'Phylum'}
+                  </span>
+                  <ChevronDown className="w-4 h-4 text-slate-500" />
+                </button>
+
+                {isPhylumMenuOpen && (
+                  <div className="absolute left-0 mt-1.5 w-56 bg-white border border-slate-200 rounded-xl shadow-xl py-1 z-50 text-sm">
+                    {PHYLA_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => {
+                          setPhylumFilter(opt.value);
+                          setCurrentIndex(0);
+                          setIsPhylumMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3.5 py-2.5 hover:bg-slate-50 flex items-center justify-between ${
+                          phylumFilter === opt.value ? 'bg-blue-50 text-blue-600 font-bold' : 'text-slate-700'
+                        }`}
+                      >
+                        <span>{opt.shortLabel}</span>
+                        {phylumFilter === opt.value && <Check className="w-4 h-4 text-blue-600" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Score & Arrows */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-200 rounded-full text-blue-700 font-mono font-bold text-xs sm:text-sm">
+              <span>{score} pts</span>
             </div>
-          )}
-        </div>
 
-        {/* Score + Forward Arrow Button (icon only) */}
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="font-mono text-sm sm:text-lg font-semibold text-slate-900 tabular-nums whitespace-nowrap">
-            {score} pts
-          </span>
-          <button
-            type="button"
-            onClick={handleNextSpecimen}
-            aria-label="Siguiente espécimen"
-            title="Siguiente espécimen"
-            className="min-h-[48px] min-w-[48px] p-2.5 text-white bg-[#2563EB] hover:bg-blue-700 active:bg-blue-800 rounded-xl transition-colors shrink-0 cursor-pointer flex items-center justify-center"
-          >
-            <ArrowRight className="w-5 h-5" />
-          </button>
+            {/* Previous Specimen Arrow */}
+            <button
+              onClick={handlePrevSpecimen}
+              className="p-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors"
+              title="Anterior"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+
+            {/* Next Specimen Arrow */}
+            <button
+              onClick={handleNextSpecimen}
+              disabled={!canAdvance}
+              className={`p-2 rounded-lg transition-all flex items-center gap-1 ${
+                canAdvance
+                  ? 'bg-[#2563EB] hover:bg-blue-700 text-white'
+                  : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+              }`}
+              title={
+                canAdvance
+                  ? 'Siguiente'
+                  : `Completá al menos ${requiredRanksCount} categorías (${answeredRanksCount}/${requiredRanksCount})`
+              }
+            >
+              {!canAdvance && <Lock className="w-4 h-4 text-slate-400" />}
+              <ArrowRight className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Main 2-column responsive laboratory workspace */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-7">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
-          {/* LEFT COLUMN: Specimen Image + General Predictive Taxonomic Input */}
-          <section className="lg:col-span-6 flex flex-col gap-4">
-            {/* Specimen Counter & Photo Switcher */}
-            <div className="flex items-center justify-between text-base text-slate-600">
-              <span className="font-medium tabular-nums">
-                Espécimen {(currentIndex % filteredSpecimens.length) + 1} /{' '}
-                {filteredSpecimens.length}
-              </span>
-              <div className="flex items-center gap-3">
-                {currentSpecimen.secondaryImageUrl && (
-                  <button
-                    type="button"
-                    onClick={() => setUseSecondaryPhoto((prev) => !prev)}
-                    className="text-sm font-semibold text-[#2563EB] hover:underline cursor-pointer whitespace-nowrap"
-                  >
-                    Cambiar vista ({useSecondaryPhoto ? '2/2' : '1/2'})
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={resetForSpecimen}
-                  title="Reiniciar este espécimen"
-                  className="text-sm font-medium text-slate-500 hover:text-slate-900 flex items-center gap-1 cursor-pointer whitespace-nowrap"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  <span>Reiniciar</span>
-                </button>
+      {/* Main Body */}
+      <main className="flex-1 max-w-4xl mx-auto px-4 py-6 w-full">
+        {/* Specimen Presentation Card */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden mb-6">
+          {/* Main Photo Area */}
+          <div
+            ref={specimenImageRef}
+            className="relative bg-slate-900 flex items-center justify-center overflow-hidden min-h-[280px] max-h-[460px]"
+          >
+            {currentSpecimen.imageUrl ? (
+              <img
+                src={currentSpecimen.imageUrl}
+                alt="Espécimen BOM"
+                className="w-full h-auto max-h-[460px] object-contain select-none"
+              />
+            ) : (
+              <div className="text-white text-center p-8">
+                <Eye className="w-12 h-12 text-slate-500 mx-auto mb-2" />
               </div>
-            </div>
+            )}
 
-            {/* Specimen Viewport Container */}
-            <div
-              ref={specimenImageRef}
-              className="w-full bg-[#F8FAFC] border border-slate-200 rounded-2xl p-3 sm:p-4 flex items-center justify-center min-h-[220px] sm:min-h-[300px]"
-            >
-              {activePhotoUrl && !imageError ? (
-                <img
-                  src={activePhotoUrl}
-                  alt="Espécimen de Cnidaria para identificar"
-                  referrerPolicy="no-referrer"
-                  onError={() => setImageError(true)}
-                  className="w-full max-h-[36vh] lg:max-h-[400px] object-contain rounded-xl select-none"
-                />
-              ) : (
-                <SpecimenSvgDiagram
-                  svgType={currentSpecimen.svgType}
-                  label={currentSpecimen.commonName}
-                />
-              )}
-            </div>
+            {/* Zoom Button */}
+            {currentSpecimen.imageUrl && (
+              <button
+                onClick={() => setIsThumbnailExpanded(true)}
+                className="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-black/80 text-white rounded-xl backdrop-blur-xs transition-colors"
+                title="Ampliar imagen"
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+            )}
+          </div>
 
-            {/* General Predictive Taxonomic Input Bar (accepts any rank in any order) */}
+          {/* Top General Predictive Input Bar */}
+          <div className="p-4 sm:p-5 bg-white border-b border-slate-200">
             <div className="relative">
-              <form onSubmit={handleFormSubmit} className="flex flex-col sm:flex-row gap-2.5">
-                <div className="relative flex-1">
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={taxInput}
-                    onChange={(e) => {
-                      setTaxInput(e.target.value);
-                      setActiveSuggestionIdx(0);
-                      setShowSuggestions(true);
-                    }}
-                    onFocus={() => setShowSuggestions(true)}
-                    onBlur={() => {
-                      setTimeout(() => setShowSuggestions(false), 180);
-                    }}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Ingresa cualquier taxón (especie, familia, clase...)"
-                    autoComplete="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className={`w-full min-h-[52px] px-4 py-3 text-[18px] sm:text-[19px] font-medium text-slate-900 bg-white border-2 rounded-xl outline-none transition-colors placeholder:text-slate-400 ${
-                      isShakingInput
-                        ? 'animate-shake border-[#EF4444]'
-                        : 'border-slate-300 focus:border-[#2563EB]'
-                    }`}
-                  />
-
-                  {/* Autocomplete Dropdown (triggers at >= 2 chars) */}
-                  {showSuggestions && suggestions.length > 0 && (
-                    <ul
-                      role="listbox"
-                      className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-20 divide-y divide-slate-100"
-                    >
-                      {suggestions.map((item, idx) => (
-                        <li key={`${item.rankKey}:${item.normalized}`}>
-                          <button
-                            type="button"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              evaluateTaxonSubmission(item.display);
-                            }}
-                            className={`w-full min-h-[48px] px-4 py-2.5 text-left flex items-center justify-between text-[18px] transition-colors cursor-pointer ${
-                              idx === activeSuggestionIdx
-                                ? 'bg-blue-50 text-[#2563EB] font-semibold'
-                                : 'text-slate-900 hover:bg-slate-50'
-                            }`}
-                          >
-                            <span className="italic">{item.display}</span>
-                            <span className="text-sm font-normal text-slate-500 not-italic">
-                              {item.rankLabel}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-
+              <form onSubmit={handleFormSubmit} className="flex gap-2">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={taxInput}
+                  onChange={(e) => {
+                    setTaxInput(e.target.value);
+                    setShowSuggestions(true);
+                    setActiveSuggestionIdx(0);
+                  }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Escribí cualquier categoría taxonómica..."
+                  className={`flex-1 px-4 py-3 bg-slate-50 border rounded-xl text-base sm:text-lg focus:outline-none focus:ring-2 focus:ring-blue-600 transition-all ${
+                    isShakingInput ? 'animate-shake border-red-500 bg-red-50/50' : 'border-slate-200'
+                  }`}
+                />
                 <button
                   type="submit"
-                  className="min-h-[52px] px-6 py-3 text-[18px] font-semibold text-white bg-[#2563EB] hover:bg-blue-700 active:bg-blue-800 rounded-xl transition-colors shrink-0 cursor-pointer"
+                  className="px-5 py-3 bg-[#2563EB] hover:bg-blue-700 text-white font-bold rounded-xl text-base transition-colors"
                 >
                   Validar
                 </button>
               </form>
 
-              {/* Immediate feedback message */}
-              {inputFeedback && (
-                <div
-                  className={`mt-3 px-4 py-3 rounded-xl text-[17px] font-medium flex items-center gap-2.5 ${
-                    inputFeedback.type === 'success'
-                      ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
-                      : inputFeedback.type === 'error'
-                      ? 'bg-red-50 text-red-900 border border-red-200'
-                      : 'bg-slate-100 text-slate-800 border border-slate-200'
-                  }`}
-                >
-                  {inputFeedback.type === 'success' ? (
-                    <Check className="w-5 h-5 text-[#10B981] shrink-0" />
-                  ) : (
-                    <AlertCircle className="w-5 h-5 text-slate-600 shrink-0" />
-                  )}
-                  <span>{inputFeedback.message}</span>
+              {/* Autocomplete Dropdown List */}
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden text-base">
+                  {suggestions.map((item, idx) => (
+                    <div
+                      key={`${item.rankKey}:${item.normalized}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        evaluateTaxonSubmission(item.display);
+                      }}
+                      className={`px-4 py-3 flex items-center justify-between cursor-pointer transition-colors ${
+                        idx === activeSuggestionIdx
+                          ? 'bg-blue-50 text-blue-700 font-semibold'
+                          : 'hover:bg-slate-50 text-slate-800'
+                      }`}
+                    >
+                      <span>{item.display}</span>
+                      <span className="text-xs uppercase font-bold text-slate-400 font-mono">
+                        {item.rankLabel}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               )}
-
-              {/* Quick study helpers (Hint / Unlock Organs) */}
-              <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
-                <button
-                  type="button"
-                  onClick={handleGiveTaxonHint}
-                  disabled={guessedRanksCount === totalRanksCount}
-                  className="min-h-[44px] px-2 py-1.5 text-slate-700 hover:text-[#2563EB] font-medium flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
-                >
-                  <HelpCircle className="w-4 h-4" />
-                  <span>Pista taxonómica</span>
-                </button>
-
-                {!isPhase2Unlocked && (
-                  <button
-                    type="button"
-                    onClick={handleRevealSpeciesAndOrgans}
-                    className="min-h-[44px] px-2 py-1.5 text-[#2563EB] hover:underline font-semibold flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Eye className="w-4 h-4" />
-                    <span>Revelar especie y pasar a órganos</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {/* RIGHT COLUMN: Filtered Inputs per Taxonomic Rank + Phase 2 Organs + Phase 3 Formol Card */}
-          <section className="lg:col-span-6 flex flex-col gap-6">
-            {/* Taxonomic Group Panel with individual filtered inputs per rank */}
-            <div className="bg-[#F8FAFC] border border-slate-200 rounded-2xl p-4 sm:p-5">
-              <div className="flex items-center justify-between mb-3.5">
-                <h2 className="text-xl font-bold text-slate-900">
-                  Grupo Taxonómico
-                </h2>
-                <span className="font-mono text-base font-semibold text-slate-700 tabular-nums">
-                  {guessedRanksCount} / {totalRanksCount}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {currentSpecimen.ranks.map((rank) => {
-                  const isGuessed = Boolean(guessedRanks[rank.key]);
-                  const isRevealedAtEnd = isPhase3Complete && !isGuessed;
-                  const isJustElevated = lastElevatedRank === rank.key;
-                  const isShakingThisRank = shakingRankKey === rank.key;
-                  const currentVal = rankInputs[rank.key] || '';
-                  const isFocused = focusedRankKey === rank.key;
-                  const rankSuggestions = isFocused
-                    ? getFilteredSuggestionsForRank(rank.key, currentVal)
-                    : [];
-
-                  if (isGuessed || isRevealedAtEnd) {
-                    return (
-                      <div
-                        key={rank.key}
-                        className={`min-h-[52px] px-3.5 py-2.5 rounded-xl border flex items-center justify-between transition-all ${
-                          isGuessed
-                            ? `bg-[#2563EB] text-white border-[#2563EB] ${
-                                isJustElevated ? 'animate-elevate' : ''
-                              }`
-                            : 'bg-white text-slate-800 border-slate-300'
-                        }`}
-                      >
-                        <span
-                          className={`text-sm font-medium ${
-                            isGuessed ? 'text-blue-100' : 'text-slate-500'
-                          }`}
-                        >
-                          {rank.label}
-                        </span>
-                        <span
-                          className={`text-[17px] font-bold text-right ${
-                            rank.key === 'genus' || rank.key === 'species' ? 'italic' : ''
-                          }`}
-                        >
-                          {rank.canonicalValue}
-                        </span>
-                      </div>
-                    );
-                  }
-
-                  // Unguessed rank: render an interactive input filtered specifically by this taxonomic rank
-                  return (
-                    <div key={rank.key} className="relative">
-                      <form
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          if (!currentVal.trim()) return;
-                          if (
-                            rankSuggestions.length > 0 &&
-                            rankSuggestionIdx >= 0 &&
-                            (normalizeText(currentVal) ===
-                              rankSuggestions[rankSuggestionIdx].normalized ||
-                              rankSuggestionIdx > 0)
-                          ) {
-                            evaluateSpecificRankSubmission(
-                              rank,
-                              rankSuggestions[rankSuggestionIdx].display
-                            );
-                            return;
-                          }
-                          evaluateSpecificRankSubmission(rank, currentVal);
-                        }}
-                        className={`min-h-[52px] px-3.5 py-2 rounded-xl border-2 bg-white flex items-center justify-between gap-2 transition-colors ${
-                          isShakingThisRank
-                            ? 'animate-shake border-[#EF4444]'
-                            : isFocused
-                            ? 'border-[#2563EB]'
-                            : 'border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <label
-                          htmlFor={`rank-input-${rank.key}`}
-                          className="text-sm font-semibold text-slate-500 shrink-0 cursor-text"
-                        >
-                          {rank.label}
-                        </label>
-                        <input
-                          id={`rank-input-${rank.key}`}
-                          type="text"
-                          value={currentVal}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setRankInputs((prev) => ({ ...prev, [rank.key]: val }));
-                            setFocusedRankKey(rank.key);
-                            setRankSuggestionIdx(0);
-                          }}
-                          onFocus={() => {
-                            setFocusedRankKey(rank.key);
-                            setRankSuggestionIdx(0);
-                          }}
-                          onBlur={() => {
-                            setTimeout(() => {
-                              setFocusedRankKey((prev) =>
-                                prev === rank.key ? null : prev
-                              );
-                            }, 180);
-                          }}
-                          onKeyDown={(e) => {
-                            if (rankSuggestions.length === 0) return;
-                            if (e.key === 'ArrowDown') {
-                              e.preventDefault();
-                              setRankSuggestionIdx(
-                                (prev) => (prev + 1) % rankSuggestions.length
-                              );
-                            } else if (e.key === 'ArrowUp') {
-                              e.preventDefault();
-                              setRankSuggestionIdx(
-                                (prev) =>
-                                  (prev - 1 + rankSuggestions.length) %
-                                  rankSuggestions.length
-                              );
-                            } else if (e.key === 'Escape') {
-                              setFocusedRankKey(null);
-                            }
-                          }}
-                          placeholder={`Escribir ${rank.label.toLowerCase()}...`}
-                          autoComplete="off"
-                          autoCorrect="off"
-                          spellCheck={false}
-                          className="w-full text-right text-[16px] sm:text-[17px] font-semibold text-slate-900 bg-transparent outline-none placeholder:text-slate-300 placeholder:font-normal"
-                        />
-                      </form>
-
-                      {/* Filtered dropdown for this specific taxonomic rank */}
-                      {isFocused && rankSuggestions.length > 0 && (
-                        <ul
-                          role="listbox"
-                          className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-30 divide-y divide-slate-100"
-                        >
-                          {rankSuggestions.map((sug, idx) => (
-                            <li key={`${rank.key}-${sug.normalized}`}>
-                              <button
-                                type="button"
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  evaluateSpecificRankSubmission(rank, sug.display);
-                                }}
-                                className={`w-full min-h-[46px] px-3.5 py-2 text-left flex items-center justify-between text-[16px] transition-colors cursor-pointer ${
-                                  idx === rankSuggestionIdx
-                                    ? 'bg-blue-50 text-[#2563EB] font-semibold'
-                                    : 'text-slate-900 hover:bg-slate-50'
-                                }`}
-                              >
-                                <span
-                                  className={
-                                    rank.key === 'genus' || rank.key === 'species'
-                                      ? 'italic'
-                                      : ''
-                                  }
-                                >
-                                  {sug.display}
-                                </span>
-                                <span className="text-xs text-slate-400">
-                                  {rank.label}
-                                </span>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
             </div>
 
-            {/* PHASE 2: Diagnostic Organs Selection Grid */}
-            {isPhase2Unlocked && (
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 animate-elevate">
-                <div className="flex items-center justify-between mb-3.5">
-                  <h2 className="text-xl font-bold text-slate-900">
-                    Órganos y Estructuras Diagnósticas
-                  </h2>
-                  <span className="font-mono text-base font-semibold text-[#2563EB] tabular-nums">
-                    {foundTrueOrgansCount} / {totalTrueOrgans}
-                  </span>
-                </div>
+            {/* Instant Validation Feedback */}
+            {inputFeedback && (
+              <div
+                className={`mt-2.5 text-sm font-semibold px-3.5 py-2 rounded-lg animate-in fade-in ${
+                  inputFeedback.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    : inputFeedback.type === 'error'
+                    ? 'bg-red-50 text-red-800 border border-red-200'
+                    : 'bg-slate-100 text-slate-700 border border-slate-200'
+                }`}
+              >
+                {inputFeedback.message}
+              </div>
+            )}
+          </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {organOptions.map((opt) => {
-                    const isSelectedTrue = Boolean(selectedTrueOrgans[opt.name]);
-                    const isClickedDistractor = Boolean(clickedDistractors[opt.name]);
-                    const isShaking = shakingOrganName === opt.name;
+          {/* Taxonomic Hierarchy Rows */}
+          <div className="p-4 sm:p-5 bg-white">
+            <div className="space-y-2.5">
+              {currentSpecimen.ranks.map((rank) => {
+                const isGuessed = Boolean(guessedRanks[rank.key]);
+                const isRevealed = Boolean(revealedRanks[rank.key]);
+                const isCompleted = isGuessed || isRevealed;
+                const isElevated = lastElevatedRank === rank.key;
 
-                    let buttonStyle =
-                      'bg-[#2563EB] hover:bg-blue-700 active:bg-blue-800 text-white border-[#2563EB]';
-                    if (isSelectedTrue) {
-                      buttonStyle = 'bg-[#10B981] text-white border-[#10B981]';
-                    } else if (isClickedDistractor) {
-                      buttonStyle = 'bg-red-50 text-red-900 border-[#EF4444]';
-                    }
-
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => handleOrganClick(opt)}
-                        className={`min-h-[52px] px-4 py-3 rounded-xl border-2 text-left text-[16px] sm:text-[17px] font-semibold transition-all flex items-center justify-between gap-2 cursor-pointer ${buttonStyle} ${
-                          isShaking ? 'animate-shake' : ''
-                        }`}
-                      >
-                        <span className="leading-snug">{opt.name}</span>
-                        {isSelectedTrue && <Check className="w-5 h-5 shrink-0" />}
-                        {isClickedDistractor && (
-                          <AlertCircle className="w-5 h-5 text-[#EF4444] shrink-0" />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Immediate diagnostic feedback on organ click */}
-                {organFeedback && (
+                return (
                   <div
-                    className={`mt-4 p-4 rounded-xl border text-[17px] leading-relaxed ${
-                      organFeedback.type === 'correct'
-                        ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
-                        : 'bg-red-50 border-red-200 text-red-950'
+                    key={rank.key}
+                    className={`p-3 rounded-xl border transition-all ${
+                      isCompleted
+                        ? 'bg-blue-50/50 border-blue-200 text-blue-900'
+                        : 'bg-slate-50 border-slate-200/90 text-slate-800'
+                    } ${isElevated ? 'ring-2 ring-blue-500 scale-[1.01]' : ''} ${
+                      shakingRankKey === rank.key ? 'animate-shake border-red-500' : ''
                     }`}
                   >
-                    <p className="font-bold">{organFeedback.title}</p>
-                    <p className="mt-1 text-[16px]">{organFeedback.detail}</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* PHASE 3: Final Specimen Description & Formol Recognition Card */}
-            {isPhase3Complete && (
-              <div className="bg-[#F8FAFC] border-2 border-[#2563EB] rounded-2xl p-5 sm:p-6 animate-elevate">
-                <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1 border-b border-slate-200 pb-3.5">
-                  <h3 className="text-2xl font-bold italic text-slate-900">
-                    {currentSpecimen.name}
-                  </h3>
-                  <span className="text-base font-semibold text-slate-600">
-                    {currentSpecimen.commonName}
-                  </span>
-                </div>
-
-                <div className="mt-4">
-                  <h4 className="text-base font-bold text-slate-900 mb-1.5">
-                    Reconocimiento del espécimen en formol (Parcial Práctico)
-                  </h4>
-                  <p className="text-[18px] leading-relaxed text-slate-800 bg-white p-4 rounded-xl border border-slate-200">
-                    {currentSpecimen.formolNotes}
-                  </p>
-                </div>
-
-                <div className="mt-4">
-                  <h4 className="text-base font-bold text-slate-900 mb-2">
-                    Resumen de órganos diagnósticos
-                  </h4>
-                  <ul className="space-y-1.5 text-[16px] text-slate-700">
-                    {currentSpecimen.organs.map((org) => (
-                      <li
-                        key={org.name}
-                        className="bg-white px-3.5 py-2 rounded-lg border border-slate-200"
-                      >
-                        <span className="font-bold text-slate-900">{org.name}:</span>{' '}
-                        <span>{org.description}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {/* Optional NCBI Entrez molecular verification */}
-                <div className="mt-4 pt-3 border-t border-slate-200">
-                  {!ncbiData && !ncbiLoading && (
-                    <button
-                      type="button"
-                      onClick={handleLoadNcbiData}
-                      className="min-h-[44px] text-sm font-semibold text-[#2563EB] hover:underline flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Dna className="w-4 h-4" />
-                      <span>
-                        Ver registros moleculares en NCBI Entrez (
-                        {currentSpecimen.taxonomy.genus})
-                      </span>
-                    </button>
-                  )}
-
-                  {ncbiLoading && (
-                    <p className="text-sm text-slate-500">
-                      Consultando NCBI E-utilities...
-                    </p>
-                  )}
-
-                  {ncbiError && <p className="text-sm text-red-600">{ncbiError}</p>}
-
-                  {ncbiData && (
-                    <div className="bg-white p-3.5 rounded-xl border border-slate-200 text-sm">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-semibold text-slate-900">
-                          NCBI Protein · {ncbiData.queryTerm} ({ncbiData.totalCount}{' '}
-                          secuencias)
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-[130px]">
+                        <span className="text-xs uppercase font-mono font-bold text-slate-500">
+                          {rank.label}
                         </span>
-                        <a
-                          href={`https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?name=${encodeURIComponent(
-                            currentSpecimen.taxonomy.genus
-                          )}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[#2563EB] hover:underline flex items-center gap-1 font-medium"
-                        >
-                          <span>NCBI Taxonomy</span>
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
+                        {isCompleted && (
+                          <Check className="w-4 h-4 text-emerald-600 stroke-[3]" />
+                        )}
                       </div>
-                      {ncbiData.records.length > 0 ? (
-                        <ul className="space-y-1 text-slate-700">
-                          {ncbiData.records.map((rec) => (
-                            <li key={rec.uid} className="truncate">
-                              <span className="font-mono text-xs font-semibold text-slate-900">
-                                {rec.accessionVersion}
-                              </span>{' '}
-                              · {rec.title} ({rec.slen} aa)
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="text-slate-500">
-                          Sin accesiones directas listadas para este género en la
-                          consulta rápida.
-                        </p>
+
+                      {/* Value or Input */}
+                      <div className="flex-1 w-full sm:w-auto">
+                        {isCompleted ? (
+                          <div className="font-bold text-base sm:text-lg text-slate-900 italic">
+                            {rank.canonicalValue}
+                          </div>
+                        ) : (
+                          <div className="relative w-full">
+                            <input
+                              type="text"
+                              value={rankInputs[rank.key] || ''}
+                              onFocus={() => setFocusedRankKey(rank.key)}
+                              onChange={(e) => {
+                                setRankInputs((prev) => ({
+                                  ...prev,
+                                  [rank.key]: e.target.value,
+                                }));
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  evaluateSpecificRankSubmission(
+                                    rank,
+                                    rankInputs[rank.key] || ''
+                                  );
+                                }
+                              }}
+                              placeholder={rank.label}
+                              className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-blue-600"
+                            />
+
+                            {/* Dropdown for rank-specific input */}
+                            {focusedRankKey === rank.key &&
+                              (rankInputs[rank.key] || '').length >= 1 && (
+                                <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 overflow-hidden text-sm">
+                                  {getFilteredSuggestionsForRank(
+                                    rank.key,
+                                    rankInputs[rank.key] || ''
+                                  ).map((item) => (
+                                    <div
+                                      key={item.normalized}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        evaluateSpecificRankSubmission(rank, item.display);
+                                      }}
+                                      className="px-3.5 py-2.5 hover:bg-blue-50 hover:text-blue-700 cursor-pointer text-slate-800"
+                                    >
+                                      {item.display}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Only Revelar button (no Pista, no point penalty) */}
+                      {!isCompleted && (
+                        <div className="flex items-center shrink-0 self-end sm:self-center">
+                          <button
+                            onClick={() => handleRevealRank(rank)}
+                            className="px-3 py-1.5 text-xs sm:text-sm font-bold text-slate-700 bg-white hover:bg-slate-100 rounded-lg border border-slate-200 transition-colors"
+                          >
+                            Revelar
+                          </button>
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
 
-                <div className="mt-5 grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={handlePrevSpecimen}
-                    className="min-h-[54px] px-4 py-3.5 text-[18px] font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <ArrowLeft className="w-5 h-5" />
-                    <span>Anterior</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleNextSpecimen}
-                    className="min-h-[54px] px-4 py-3.5 text-[18px] font-bold text-white bg-[#2563EB] hover:bg-blue-700 active:bg-blue-800 rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <span>Siguiente</span>
-                    <ArrowRight className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-            )}
-          </section>
+        {/* Bottom Navigation Bar */}
+        <div className="flex items-center justify-between py-4 border-t border-slate-200">
+          <button
+            onClick={handlePrevSpecimen}
+            className="p-3 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-100 transition-colors flex items-center justify-center"
+            title="Anterior"
+          >
+            <ArrowLeft className="w-6 h-6" />
+          </button>
+
+          <button
+            onClick={handleNextSpecimen}
+            disabled={!canAdvance}
+            className={`px-6 py-3.5 rounded-xl font-bold text-base transition-all flex items-center gap-2 ${
+              canAdvance
+                ? 'bg-[#2563EB] hover:bg-blue-700 text-white'
+                : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+            }`}
+          >
+            {!canAdvance && <Lock className="w-4 h-4 text-slate-400" />}
+            <span>
+              {canAdvance
+                ? quizType === 'random10' && currentIndex + 1 >= 10
+                  ? 'Finalizar'
+                  : 'Siguiente'
+                : `${answeredRanksCount}/${requiredRanksCount}`}
+            </span>
+            <ArrowRight className="w-5 h-5" />
+          </button>
         </div>
       </main>
+
+      {/* Expanded Photo Lightbox Modal */}
+      {isThumbnailExpanded && currentSpecimen.imageUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-in fade-in"
+          onClick={() => setIsThumbnailExpanded(false)}
+        >
+          <div
+            className="relative max-w-4xl max-h-[90vh] bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setIsThumbnailExpanded(false)}
+              className="absolute top-3 right-3 p-2 bg-black/60 hover:bg-black/90 text-white rounded-xl z-10 transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <img
+              src={currentSpecimen.imageUrl}
+              alt={currentSpecimen.name}
+              className="max-h-[85vh] max-w-full object-contain"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

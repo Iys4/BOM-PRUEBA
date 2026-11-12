@@ -50,14 +50,14 @@ export interface CnidariaSpecimen {
   svgType?: SvgDiagramType;
   taxonomy: {
     phylum: string;
-    subphylum: string;
+    subphylum?: string;
     class: string;
     subclass?: string;
-    order: string;
+    order?: string;
     suborder?: string;
-    family: string;
-    genus: string;
-    species: string;
+    family?: string;
+    genus?: string;
+    species?: string;
   };
   ranks: TaxonRankInfo[];
   organs: OrganItem[];
@@ -246,7 +246,7 @@ export const CNIDARIA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'obelia_sp',
     name: 'Obelia sp.',
     commonName: 'Hidroide colonial tecado / Campanulárido',
-    imageUrl: '/assets/aistudio/OBELIA_ab8c65f7.jpg',
+    imageUrl: '/assets/aistudio/obelia_sp.png',
     taxonomy: {
       phylum: 'Cnidaria',
       subphylum: 'Medusozoa',
@@ -775,7 +775,7 @@ export const CNIDARIA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'lychnorhiza_lucerna',
     name: 'Lychnorhiza lucerna',
     commonName: 'Medusa de la cruz (Rizostomo)',
-    imageUrl: '/assets/aistudio/Lychnorhiza_lucerna_87c06055.jpg',
+    imageUrl: '/assets/aistudio/lychnorhiza_lucerna.png',
     taxonomy: {
       phylum: 'Cnidaria',
       subphylum: 'Medusozoa',
@@ -1013,7 +1013,7 @@ export const CNIDARIA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'nanomia_bijuga',
     name: 'Nanomia bijuga',
     commonName: 'Sifonóforo fisonéctido (con pneumatóforo y nectosoma)',
-    svgType: 'nanomia',
+    imageUrl: '/assets/aistudio/Nanomia_bijuga.jpg',
     taxonomy: {
       phylum: 'Cnidaria',
       subphylum: 'Medusozoa',
@@ -1055,7 +1055,7 @@ export const CNIDARIA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'pseudodiploria_strigosa',
     name: 'Pseudodiploria strigosa',
     commonName: 'Coral cerebro (Coral hermatípico meandroide)',
-    svgType: 'pseudodiploria',
+    imageUrl: '/assets/aistudio/pseudodiploria_strigosa.png',
     taxonomy: {
       phylum: 'Cnidaria',
       subphylum: 'Anthozoa',
@@ -1095,7 +1095,7 @@ export const CNIDARIA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'mussismilia_sp',
     name: 'Mussismilia sp.',
     commonName: 'Coral hermatípico de grandes cálices dentados',
-    svgType: 'mussismilia',
+    imageUrl: '/assets/aistudio/Mussismilia_sp.jpg',
     taxonomy: {
       phylum: 'Cnidaria',
       subphylum: 'Anthozoa',
@@ -1134,7 +1134,7 @@ export const CNIDARIA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'favia_sp',
     name: 'Favia sp.',
     commonName: 'Coral estrellado / Coral panal (Scleractinia)',
-    svgType: 'favia',
+    imageUrl: '/assets/aistudio/Favia_sp.jpg',
     taxonomy: {
       phylum: 'Cnidaria',
       subphylum: 'Anthozoa',
@@ -1173,7 +1173,7 @@ export const CNIDARIA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'pocillopora_tuahiniensis',
     name: 'Pocillopora tuahiniensis',
     commonName: 'Coral coliflor / Coral ramificado verrugoso',
-    svgType: 'pocillopora',
+    imageUrl: '/assets/aistudio/Pocillopora_tuahiniensis.jpg',
     taxonomy: {
       phylum: 'Cnidaria',
       subphylum: 'Anthozoa',
@@ -1212,7 +1212,7 @@ export const CNIDARIA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'porites_furcata',
     name: 'Porites furcata',
     commonName: 'Coral dedo poroso (Scleractinia)',
-    svgType: 'porites',
+    imageUrl: '/assets/aistudio/Porites_furcata.jpg',
     taxonomy: {
       phylum: 'Cnidaria',
       subphylum: 'Anthozoa',
@@ -1253,6 +1253,8 @@ import { MOLLUSCA_SPECIMENS } from './molluscaDataset';
 import { ANNELIDA_FORAM_SPECIMENS } from './annelidaForamDataset';
 import { CRUSTACEA_SPECIMENS } from './crustaceaDataset';
 import { CTENOPHORA_CHAETOGNATHA_SPECIMENS } from './ctenophoraChaetognathaDataset';
+import { SUPRASPECIFIC_SPECIMENS } from './supraspecificDataset';
+import { BRYOZOA_SPECIMENS } from './bryozoaDataset';
 
 export const ALL_BOM_SPECIMENS: CnidariaSpecimen[] = [
   ...CNIDARIA_SPECIMENS,
@@ -1260,6 +1262,8 @@ export const ALL_BOM_SPECIMENS: CnidariaSpecimen[] = [
   ...ANNELIDA_FORAM_SPECIMENS,
   ...CRUSTACEA_SPECIMENS,
   ...CTENOPHORA_CHAETOGNATHA_SPECIMENS,
+  ...SUPRASPECIFIC_SPECIMENS,
+  ...BRYOZOA_SPECIMENS,
 ];
 
 export interface AutocompleteSuggestion {
@@ -1282,8 +1286,8 @@ export function normalizeText(str: string): string {
 export const ALL_TAXONOMIC_SUGGESTIONS: AutocompleteSuggestion[] = (() => {
   const map = new Map<string, AutocompleteSuggestion>();
 
-  const register = (display: string, rankKey: TaxonRankKey, rankLabel: string) => {
-    if (!display || display === '-' || display === 'N/A') return;
+  const register = (display?: string, rankKey?: TaxonRankKey, rankLabel?: string) => {
+    if (!display || !rankKey || !rankLabel || display === '-' || display === 'N/A') return;
     const norm = normalizeText(display);
     if (!norm) return;
     const mapKey = `${rankKey}:${norm}`;
@@ -1294,14 +1298,14 @@ export const ALL_TAXONOMIC_SUGGESTIONS: AutocompleteSuggestion[] = (() => {
 
   for (const spec of ALL_BOM_SPECIMENS) {
     register(spec.taxonomy.phylum, 'phylum', 'Phylum');
-    register(spec.taxonomy.subphylum, 'subphylum', 'Subphylum');
+    if (spec.taxonomy.subphylum) register(spec.taxonomy.subphylum, 'subphylum', 'Subphylum');
     register(spec.taxonomy.class, 'class', 'Clase');
     if (spec.taxonomy.subclass) register(spec.taxonomy.subclass, 'subclass', 'Subclase');
-    register(spec.taxonomy.order, 'order', 'Orden');
+    if (spec.taxonomy.order) register(spec.taxonomy.order, 'order', 'Orden');
     if (spec.taxonomy.suborder) register(spec.taxonomy.suborder, 'suborder', 'Suborden');
-    register(spec.taxonomy.family, 'family', 'Familia');
-    register(spec.taxonomy.genus, 'genus', 'Género');
-    register(spec.taxonomy.species, 'species', 'Especie');
+    if (spec.taxonomy.family) register(spec.taxonomy.family, 'family', 'Familia');
+    if (spec.taxonomy.genus) register(spec.taxonomy.genus, 'genus', 'Género');
+    if (spec.taxonomy.species) register(spec.taxonomy.species, 'species', 'Especie');
 
     for (const rank of spec.ranks) {
       register(rank.canonicalValue, rank.key, rank.label);

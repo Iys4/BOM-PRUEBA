@@ -289,7 +289,7 @@ export const CRUSTACEA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'penaeus_paulensis',
     name: 'Penaeus paulensis',
     commonName: 'Langostino rosado común (Farfantepenaeus paulensis)',
-    svgType: 'decapod_shrimp',
+    imageUrl: '/assets/aistudio/Penaeus_paulensis.jpg',
     taxonomy: {
       phylum: 'Arthropoda',
       subphylum: 'Crustacea',
@@ -640,7 +640,7 @@ export const CRUSTACEA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'podon_intermedius',
     name: 'Podon intermedius',
     commonName: 'Cladócero marino globoso con sinus cervical',
-    svgType: 'cladocera_podon',
+    imageUrl: '/assets/aistudio/Podon_intermedius.jpg',
     taxonomy: {
       phylum: 'Arthropoda',
       subphylum: 'Crustacea',
@@ -716,7 +716,7 @@ export const CRUSTACEA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'mysidacea_sp',
     name: 'Mysida / Mysidacea',
     commonName: 'Misidáceo / Camarón zarigüeya de marsupio',
-    svgType: 'mysidacea',
+    imageUrl: '/assets/aistudio/Mysida.jpg',
     taxonomy: {
       phylum: 'Arthropoda',
       subphylum: 'Crustacea',

@@ -182,46 +182,10 @@ export const CTENOPHORA_CHAETOGNATHA_SPECIMENS: CnidariaSpecimen[] = [
   },
   // PHYLUM CHAETOGNATHA
   {
-    id: 'sagitta_friderici',
-    name: 'Sagitta friderici / Sagitta enflata',
-    commonName: 'Gusano flecha común / Quetognato planctónico',
-    svgType: 'chaetognatha_sagitta',
-    taxonomy: {
-      phylum: 'Chaetognatha',
-      subphylum: 'Chaetognatha',
-      class: 'Sagittoidea',
-      order: 'Aphragmophora',
-      family: 'Sagittidae',
-      genus: 'Sagitta',
-      species: 'Sagitta friderici',
-    },
-    ranks: [
-      { key: 'phylum', label: 'Phylum', canonicalValue: 'Chaetognatha', acceptedAliases: ['chaetognatha', 'quetognatos', 'quetognato', 'gusano flecha'] },
-      { key: 'class', label: 'Clase', canonicalValue: 'Sagittoidea', acceptedAliases: ['sagittoidea'] },
-      { key: 'order', label: 'Orden', canonicalValue: 'Aphragmophora', acceptedAliases: ['aphragmophora'] },
-      { key: 'family', label: 'Familia', canonicalValue: 'Sagittidae', acceptedAliases: ['sagittidae'] },
-      { key: 'genus', label: 'Género', canonicalValue: 'Sagitta (Parasagitta / Flaccisagitta)', acceptedAliases: ['sagitta', 'parasagitta', 'flaccisagitta'] },
-      { key: 'species', label: 'Especie', canonicalValue: 'Sagitta friderici / S. enflata', acceptedAliases: ['sagitta friderici', 'sagitta enflata', 'sagitta sp'] },
-    ],
-    organs: [
-      { name: 'Cuerpo trimetamérico transparente en dardo (cabeza, tronco y cola)', description: 'Separados por septos transversales internos.' },
-      { name: 'Ganchos quitinosos bucales curvos (espinas de captura) y dientes', description: 'Cubiertos por el capuchón cefálico retráctil durante el nado.' },
-      { name: 'Dos pares de aletas laterales horizontales separadas + aleta caudal', description: 'Lo diferencia de Spadella (que tiene un solo par de aletas laterales).' },
-      { name: 'Ausencia de fragmas musculares transversales ventrales (Orden Aphragmophora)', description: 'Musculatura longitudinal en bandas.' },
-      { name: 'Ovarios en el tronco (mesocele) y testículos/vesículas seminales en la cola (metacele)', description: 'Hermafrodita protándrico.' },
-    ],
-    distractors: [
-      { name: 'Fragmas ventrales musculares transversales y un solo par de aletas laterales', reason: 'Diagnóstico del orden Phragmophora (Spadella); Sagitta pertenece a Aphragmophora y tiene 2 pares de aletas laterales.' },
-      { name: 'Parapodios con setas o quetas birrámeas', reason: 'Diagnóstico de Annelida Polychaeta; los quetognatos no tienen parapodios ni anillos metaméricos.' },
-      { name: 'Hileras de peines ciliados (ctenos)', reason: 'Exclusivos de Ctenophora.' },
-    ],
-    formolNotes: 'Gusano torpedo transparente y rígido en forma de flecha. En la cabeza destacan los ganchos bucales ambarinos y en los flancos se ven 2 pares de aletas laterales horizontales separadas más la aleta caudal en espátula.',
-  },
-  {
     id: 'spadella_sp',
     name: 'Spadella sp.',
     commonName: 'Quetognato bentónico (Orden Phragmophora)',
-    svgType: 'chaetognatha_spadella',
+    imageUrl: '/assets/aistudio/Spadella_sp.jpg',
     taxonomy: {
       phylum: 'Chaetognatha',
       subphylum: 'Chaetognatha',

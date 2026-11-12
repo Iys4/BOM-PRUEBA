@@ -84,7 +84,7 @@ export const MOLLUSCA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'proteopitar_patagonicus',
     name: 'Proteopitar patagonicus',
     commonName: 'Almeja venérida patagónica (Pitar patagonicus)',
-    svgType: 'bivalve_venerid',
+    imageUrl: '/assets/aistudio/Proteopitar_patagonicus.jpg',
     taxonomy: {
       phylum: 'Mollusca',
       subphylum: 'Conchifera',
@@ -394,7 +394,7 @@ export const MOLLUSCA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'stramonita_haemastoma',
     name: 'Stramonita haemastoma',
     commonName: 'Caracol de boca roja / Caracol de restinga (Thais haemastoma)',
-    imageUrl: '/assets/aistudio/Stramonita_haemastoma.jpg',
+    imageUrl: '/assets/aistudio/stramonita_haemastoma.png',
     taxonomy: {
       phylum: 'Mollusca',
       subphylum: 'Conchifera',
@@ -509,7 +509,7 @@ export const MOLLUSCA_SPECIMENS: CnidariaSpecimen[] = [
     id: 'illex_argentinus',
     name: 'Illex argentinus',
     commonName: 'Calamar común argentino / Calamar de aleta corta',
-    imageUrl: '/assets/aistudio/Illex_argentinus.jpg',
+    imageUrl: '/assets/aistudio/illex_argentinus.png',
     taxonomy: {
       phylum: 'Mollusca',
       subphylum: 'Conchifera',
