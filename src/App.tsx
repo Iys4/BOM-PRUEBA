@@ -20,6 +20,7 @@ import {
   History,
   Play,
   ListFilter,
+  Crosshair,
 } from 'lucide-react';
 import {
   ALL_BOM_SPECIMENS,
@@ -30,6 +31,7 @@ import {
   TaxonRankInfo,
 } from './data/cnidariaDataset';
 import { EncyclopediaView } from './components/EncyclopediaView';
+import { OrganIdentifierView } from './components/OrganIdentifierView';
 
 interface QuizRecord {
   id: string;
@@ -40,7 +42,7 @@ interface QuizRecord {
   ranksGuessed: number;
 }
 
-type AppScreen = 'home' | 'jugar_menu' | 'quiz' | 'encyclopedia' | 'results';
+type AppScreen = 'home' | 'jugar_menu' | 'quiz' | 'encyclopedia' | 'organ_identifier' | 'results';
 type QuizType = 'random10' | 'byOrder' | 'all';
 
 type PhylumFilter =
@@ -544,6 +546,17 @@ export default function App() {
     setScreen('results');
   };
 
+  // Back arrow only works if there is a previous species and it was already played
+  const canGoPrev = useMemo(() => {
+    if (currentIndex <= 0) return false;
+    if (quizType === 'all') return true;
+    const prevSpec = currentFilteredList[currentIndex - 1];
+    if (!prevSpec) return false;
+    const g = guessedBySpecId[prevSpec.id] || {};
+    const r = revealedBySpecId[prevSpec.id] || {};
+    return Object.keys(g).length > 0 || Object.keys(r).length > 0;
+  }, [currentIndex, quizType, currentFilteredList, guessedBySpecId, revealedBySpecId]);
+
   // Handle advancing to next specimen
   const handleNextSpecimen = () => {
     if (!canAdvance) return;
@@ -560,9 +573,8 @@ export default function App() {
   };
 
   const handlePrevSpecimen = () => {
-    setCurrentIndex((prev) =>
-      prev === 0 ? currentFilteredList.length - 1 : prev - 1
-    );
+    if (!canGoPrev) return;
+    setCurrentIndex((prev) => prev - 1);
   };
 
   // Keyboard navigation
@@ -591,6 +603,11 @@ export default function App() {
   // Render Encyclopedia Screen
   if (screen === 'encyclopedia') {
     return <EncyclopediaView onBackToHome={() => setScreen('home')} />;
+  }
+
+  // Render Organ Identifier (Beta) Screen
+  if (screen === 'organ_identifier') {
+    return <OrganIdentifierView onBackToHome={() => setScreen('home')} />;
   }
 
   // Render Results Screen (for 10 Species Exam)
@@ -695,6 +712,15 @@ export default function App() {
             >
               <Layers className="w-6 h-6 text-slate-700 shrink-0" />
               <span>Practicar con todas las especies</span>
+            </button>
+
+            {/* 4. Gray button: Identificador de órganos (beta) */}
+            <button
+              onClick={() => setScreen('organ_identifier')}
+              className="w-full py-4 px-6 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 font-bold text-lg sm:text-xl rounded-xl transition-colors flex items-center gap-4 text-left"
+            >
+              <Crosshair className="w-6 h-6 text-slate-700 shrink-0" />
+              <span>Identificador de órganos (beta)</span>
             </button>
           </div>
         </div>
@@ -876,7 +902,12 @@ export default function App() {
             {/* Previous Specimen Arrow */}
             <button
               onClick={handlePrevSpecimen}
-              className="p-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors"
+              disabled={!canGoPrev}
+              className={`p-2 rounded-lg border transition-colors ${
+                canGoPrev
+                  ? 'border-slate-200 text-slate-700 hover:bg-slate-100'
+                  : 'border-slate-100 text-slate-300 bg-slate-50 cursor-not-allowed'
+              }`}
               title="Anterior"
             >
               <ArrowLeft className="w-5 h-5" />
@@ -1116,7 +1147,12 @@ export default function App() {
         <div className="flex items-center justify-between py-4 border-t border-slate-200">
           <button
             onClick={handlePrevSpecimen}
-            className="p-3 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-100 transition-colors flex items-center justify-center"
+            disabled={!canGoPrev}
+            className={`p-3 rounded-xl border font-bold transition-colors flex items-center justify-center ${
+              canGoPrev
+                ? 'border-slate-200 text-slate-700 hover:bg-slate-100'
+                : 'border-slate-100 text-slate-300 bg-slate-50 cursor-not-allowed'
+            }`}
             title="Anterior"
           >
             <ArrowLeft className="w-6 h-6" />
