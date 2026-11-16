@@ -32,6 +32,7 @@ import {
 } from './data/cnidariaDataset';
 import { EncyclopediaView } from './components/EncyclopediaView';
 import { OrganIdentifierView } from './components/OrganIdentifierView';
+import { InlineZoomableImage, FloatingZoomPopup } from './components/ZoomableImage';
 
 interface QuizRecord {
   id: string;
@@ -939,32 +940,19 @@ export default function App() {
       <main className="flex-1 max-w-4xl mx-auto px-4 py-6 w-full">
         {/* Specimen Presentation Card */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden mb-6">
-          {/* Main Photo Area */}
-          <div
-            ref={specimenImageRef}
-            className="relative bg-slate-900 flex items-center justify-center overflow-hidden min-h-[280px] max-h-[460px]"
-          >
+          {/* Main Photo Area with Inline Zoom & Pan */}
+          <div ref={specimenImageRef}>
             {currentSpecimen.imageUrl ? (
-              <img
+              <InlineZoomableImage
                 src={currentSpecimen.imageUrl}
                 alt="Espécimen BOM"
-                className="w-full h-auto max-h-[460px] object-contain select-none"
+                darkBg={true}
+                onOpenPopup={() => setIsThumbnailExpanded(true)}
               />
             ) : (
-              <div className="text-white text-center p-8">
+              <div className="bg-slate-900 flex items-center justify-center min-h-[280px] text-white text-center p-8">
                 <Eye className="w-12 h-12 text-slate-500 mx-auto mb-2" />
               </div>
-            )}
-
-            {/* Zoom Button */}
-            {currentSpecimen.imageUrl && (
-              <button
-                onClick={() => setIsThumbnailExpanded(true)}
-                className="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-black/80 text-white rounded-xl backdrop-blur-xs transition-colors"
-                title="Ampliar imagen"
-              >
-                <Maximize2 className="w-4 h-4" />
-              </button>
             )}
           </div>
 
@@ -1180,29 +1168,14 @@ export default function App() {
         </div>
       </main>
 
-      {/* Expanded Photo Lightbox Modal */}
+      {/* Floating Draggable & Zoomable Photo Pop-up */}
       {isThumbnailExpanded && currentSpecimen.imageUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setIsThumbnailExpanded(false)}
-        >
-          <div
-            className="relative max-w-4xl max-h-[90vh] bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 flex flex-col items-center"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={() => setIsThumbnailExpanded(false)}
-              className="absolute top-3 right-3 p-2 bg-black/60 hover:bg-black/90 text-white rounded-xl z-10 transition-colors"
-            >
-              <X className="w-6 h-6" />
-            </button>
-            <img
-              src={currentSpecimen.imageUrl}
-              alt={currentSpecimen.name}
-              className="max-h-[85vh] max-w-full object-contain"
-            />
-          </div>
-        </div>
+        <FloatingZoomPopup
+          src={currentSpecimen.imageUrl}
+          title="Vista ampliada del espécimen"
+          darkBg={true}
+          onClose={() => setIsThumbnailExpanded(false)}
+        />
       )}
     </div>
   );

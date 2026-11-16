@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Check,
-  ArrowRight,
   ArrowLeft,
   Maximize2,
-  X,
-  ChevronDown,
+  Trophy,
+  RotateCcw,
+  Play,
 } from 'lucide-react';
 import { normalizeText } from '../data/cnidariaDataset';
 import {
@@ -14,29 +14,39 @@ import {
   AnatomyDiagram,
   AnatomyTargetPart,
 } from '../data/anatomyDiagramsDataset';
+import { InlineZoomableImage, FloatingZoomPopup } from './ZoomableImage';
 
 interface OrganIdentifierViewProps {
   onBackToHome: () => void;
 }
 
+const PR_STORAGE_KEY = 'bom_organ_pr_records_v1';
+
 export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) {
-  const [currentIndex, setCurrentIndex] = useState<number>(0);
+  const [selectedDiagramId, setSelectedDiagramId] = useState<string | null>(null);
+  const [isMatchFinished, setIsMatchFinished] = useState<boolean>(false);
+  const [isNewPR, setIsNewPR] = useState<boolean>(false);
+
+  // Personal Records per diagramId stored in localStorage
+  const [prRecords, setPrRecords] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem(PR_STORAGE_KEY);
+      if (raw) {
+        return JSON.parse(raw);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return {};
+  });
+
+  // Current individual match state
   const [score, setScore] = useState<number>(0);
-  const [isDiagramMenuOpen, setIsDiagramMenuOpen] = useState<boolean>(false);
-
-  // Track which diagram indices have been played/visited
-  const [visitedIndices, setVisitedIndices] = useState<Record<number, boolean>>({ 0: true });
-
-  // Memory across diagrams in session
-  const [guessedByDiagramId, setGuessedByDiagramId] = useState<
-    Record<string, Record<number, boolean>>
-  >({});
-  const [revealedByDiagramId, setRevealedByDiagramId] = useState<
-    Record<string, Record<number, boolean>>
-  >({});
+  const [guessedParts, setGuessedParts] = useState<Record<number, boolean>>({});
+  const [revealedParts, setRevealedParts] = useState<Record<number, boolean>>({});
   const [lastElevatedNumbers, setLastElevatedNumbers] = useState<number[]>([]);
 
-  // Sticky thumbnail & lightbox modal
+  // Sticky thumbnail & floating popup
   const diagramImageRef = useRef<HTMLDivElement>(null);
   const [isMainImageOutOfView, setIsMainImageOutOfView] = useState<boolean>(false);
   const [isThumbnailExpanded, setIsThumbnailExpanded] = useState<boolean>(false);
@@ -56,23 +66,67 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
   const [focusedNumber, setFocusedNumber] = useState<number | null>(null);
   const [shakingNumber, setShakingNumber] = useState<number | null>(null);
 
-  const menuContainerRef = useRef<HTMLDivElement>(null);
+  const currentDiagram: AnatomyDiagram | null = useMemo(() => {
+    if (!selectedDiagramId) return null;
+    return ANATOMY_DIAGRAMS.find((d) => d.id === selectedDiagramId) || null;
+  }, [selectedDiagramId]);
 
-  const currentDiagram: AnatomyDiagram =
-    ANATOMY_DIAGRAMS[currentIndex] || ANATOMY_DIAGRAMS[0];
+  // Save PR helper
+  const saveRecordIfBetter = (diagramId: string, finalScore: number) => {
+    setPrRecords((prev) => {
+      const existing = prev[diagramId];
+      const isBetter = existing === undefined || finalScore > existing;
+      if (!isBetter) return prev;
+      const updated = { ...prev, [diagramId]: finalScore };
+      try {
+        localStorage.setItem(PR_STORAGE_KEY, JSON.stringify(updated));
+      } catch {
+        // Ignore storage errors
+      }
+      return updated;
+    });
+  };
 
-  const guessedParts = useMemo(
-    () => guessedByDiagramId[currentDiagram.id] || {},
-    [guessedByDiagramId, currentDiagram.id]
-  );
+  // Start or restart an individual match for a specific diagram
+  const startDiagramMatch = (diagramId: string) => {
+    setSelectedDiagramId(diagramId);
+    setIsMatchFinished(false);
+    setIsNewPR(false);
+    setScore(0);
+    setGuessedParts({});
+    setRevealedParts({});
+    setLastElevatedNumbers([]);
+    setPartInput('');
+    setShowSuggestions(false);
+    setInputFeedback(null);
+    setNumberInputs({});
+    setFocusedNumber(null);
+    setIsThumbnailExpanded(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
-  const revealedParts = useMemo(
-    () => revealedByDiagramId[currentDiagram.id] || {},
-    [revealedByDiagramId, currentDiagram.id]
-  );
+  // Finish the current match and record PR in localStorage
+  const finishCurrentMatch = (finalScoreToSave?: number) => {
+    if (!currentDiagram) return;
+    const effectiveScore = finalScoreToSave !== undefined ? finalScoreToSave : score;
+    const previousPR = prRecords[currentDiagram.id];
+    const beatPR =
+      previousPR === undefined
+        ? effectiveScore > 0
+        : effectiveScore > previousPR;
+
+    saveRecordIfBetter(currentDiagram.id, effectiveScore);
+    setIsNewPR(beatPR);
+    setIsMatchFinished(true);
+    setIsThumbnailExpanded(false);
+  };
 
   // Observe main image scroll for sticky preview
   useEffect(() => {
+    if (!currentDiagram || isMatchFinished) {
+      setIsMainImageOutOfView(false);
+      return;
+    }
     const el = diagramImageRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
@@ -83,29 +137,7 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [currentDiagram.id]);
-
-  // Close diagram dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuContainerRef.current && !menuContainerRef.current.contains(e.target as Node)) {
-        setIsDiagramMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  // Clear transient inputs when changing diagram (keeping guessed/revealed in memory)
-  useEffect(() => {
-    setLastElevatedNumbers([]);
-    setPartInput('');
-    setShowSuggestions(false);
-    setInputFeedback(null);
-    setNumberInputs({});
-    setFocusedNumber(null);
-    setIsThumbnailExpanded(false);
-  }, [currentDiagram.id]);
+  }, [currentDiagram, isMatchFinished]);
 
   // General predictive suggestions (threshold: 2 characters)
   const suggestions = useMemo(() => {
@@ -161,8 +193,29 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
     return target.acceptedInputs.some((alias) => normalizeText(alias) === normInput);
   };
 
+  // Check if all targets are completed after an update, and auto-save PR
+  const checkAndPersistProgress = (
+    diagram: AnatomyDiagram,
+    nextGuessed: Record<number, boolean>,
+    nextRevealed: Record<number, boolean>,
+    nextScore: number
+  ) => {
+    // Always keep PR updated if current score already exceeds previous PR
+    if (nextScore > (prRecords[diagram.id] ?? -1)) {
+      saveRecordIfBetter(diagram.id, nextScore);
+    }
+
+    const allCompleted = diagram.targets.every(
+      (t) => nextGuessed[t.number] || nextRevealed[t.number]
+    );
+    if (allCompleted) {
+      saveRecordIfBetter(diagram.id, nextScore);
+    }
+  };
+
   // Validate general top input submission
   const evaluateGeneralPartSubmission = (rawValue: string) => {
+    if (!currentDiagram) return;
     const norm = normalizeText(rawValue);
     if (!norm) return;
 
@@ -185,21 +238,19 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
         return;
       }
 
-      const updated = { ...guessedParts };
+      const updatedGuessed = { ...guessedParts };
       let pointsEarned = 0;
       const elevatedNums: number[] = [];
 
       for (const t of newlyGuessed) {
-        updated[t.number] = true;
+        updatedGuessed[t.number] = true;
         pointsEarned += 100;
         elevatedNums.push(t.number);
       }
 
-      setGuessedByDiagramId((prev) => ({
-        ...prev,
-        [currentDiagram.id]: updated,
-      }));
-      setScore((prev) => prev + pointsEarned);
+      const nextScore = score + pointsEarned;
+      setGuessedParts(updatedGuessed);
+      setScore(nextScore);
       setLastElevatedNumbers(elevatedNums);
       setPartInput('');
       setShowSuggestions(false);
@@ -212,6 +263,13 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
         type: 'success',
         message: `+${pointsEarned} pts — ${labelsText}`,
       });
+
+      checkAndPersistProgress(
+        currentDiagram,
+        updatedGuessed,
+        revealedParts,
+        nextScore
+      );
       return;
     }
 
@@ -228,16 +286,15 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
     target: AnatomyTargetPart,
     rawValue: string
   ) => {
+    if (!currentDiagram) return;
     const norm = normalizeText(rawValue);
     if (!norm) return;
 
     if (doesTargetMatchInput(target, norm)) {
-      const updated = { ...guessedParts, [target.number]: true };
-      setGuessedByDiagramId((prev) => ({
-        ...prev,
-        [currentDiagram.id]: updated,
-      }));
-      setScore((prev) => prev + 100);
+      const updatedGuessed = { ...guessedParts, [target.number]: true };
+      const nextScore = score + 100;
+      setGuessedParts(updatedGuessed);
+      setScore(nextScore);
       setLastElevatedNumbers([target.number]);
       setNumberInputs((prev) => ({ ...prev, [target.number]: '' }));
       setFocusedNumber(null);
@@ -245,6 +302,13 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
         type: 'success',
         message: `+100 pts — #${target.number}: ${target.canonicalName}`,
       });
+
+      checkAndPersistProgress(
+        currentDiagram,
+        updatedGuessed,
+        revealedParts,
+        nextScore
+      );
       return;
     }
 
@@ -295,37 +359,180 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
 
   // Reveal a specific numbered part (0 points, no penalty)
   const handleRevealTarget = (target: AnatomyTargetPart) => {
+    if (!currentDiagram) return;
     if (guessedParts[target.number] || revealedParts[target.number]) return;
-    setRevealedByDiagramId((prev) => ({
-      ...prev,
-      [currentDiagram.id]: {
-        ...(prev[currentDiagram.id] || {}),
-        [target.number]: true,
-      },
-    }));
+    const updatedRevealed = { ...revealedParts, [target.number]: true };
+    setRevealedParts(updatedRevealed);
     setInputFeedback({
       type: 'info',
       message: `#${target.number}: ${target.canonicalName}`,
     });
+
+    checkAndPersistProgress(
+      currentDiagram,
+      guessedParts,
+      updatedRevealed,
+      score
+    );
   };
 
-  // Back arrow only works if there is a previous diagram that was already played/visited
-  const canGoPrev =
-    currentIndex > 0 && Boolean(visitedIndices[currentIndex - 1]);
-  const canGoNext = currentIndex < ANATOMY_DIAGRAMS.length - 1;
+  // ---------------------------------------------------------------------------
+  // VIEW 1: ANIMAL SELECTION LIST
+  // ---------------------------------------------------------------------------
+  if (!currentDiagram) {
+    return (
+      <div className="min-h-screen bg-white text-slate-900 flex flex-col font-sans">
+        <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-slate-200 px-4 sm:px-6 py-3">
+          <div className="max-w-3xl mx-auto flex items-center justify-between">
+            <button
+              onClick={onBackToHome}
+              className="p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors flex items-center gap-2 font-bold text-sm"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              <span>Volver</span>
+            </button>
+            <h1 className="text-base sm:text-lg font-black text-slate-900">
+              Identificador de órganos
+            </h1>
+            <div className="w-16" />
+          </div>
+        </header>
 
-  const handlePrevDiagram = () => {
-    if (!canGoPrev) return;
-    setCurrentIndex((prev) => prev - 1);
-  };
+        <main className="flex-1 max-w-3xl mx-auto px-4 py-6 w-full">
+          <div className="space-y-3">
+            {ANATOMY_DIAGRAMS.map((diag) => {
+              const pr = prRecords[diag.id];
+              const hasPR = pr !== undefined;
 
-  const handleNextDiagram = () => {
-    if (!canGoNext) return;
-    const nextIdx = currentIndex + 1;
-    setVisitedIndices((prev) => ({ ...prev, [nextIdx]: true }));
-    setCurrentIndex(nextIdx);
-  };
+              return (
+                <div
+                  key={diag.id}
+                  onClick={() => startDiagramMatch(diag.id)}
+                  className="group cursor-pointer p-3.5 sm:p-4 rounded-2xl border border-slate-200 hover:border-blue-500 bg-white hover:bg-blue-50/20 transition-all flex items-center justify-between gap-4 shadow-2xs"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl border border-slate-200 bg-white p-1 shrink-0 flex items-center justify-center overflow-hidden">
+                      <img
+                        src={diag.imageUrl}
+                        alt={diag.organismGroup}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
 
+                    <div className="min-w-0">
+                      <h2 className="text-base sm:text-lg font-black text-slate-900 group-hover:text-blue-600 transition-colors truncate">
+                        {diag.organismGroup}
+                      </h2>
+
+                      {hasPR && (
+                        <div className="mt-0.5 text-xs sm:text-sm font-mono font-bold text-blue-600">
+                          PR: {pr}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startDiagramMatch(diag.id);
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-[#2563EB] group-hover:bg-blue-700 text-white font-bold text-sm flex items-center gap-1.5 shrink-0 transition-colors"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    <span>Jugar</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const maxDiagramScore = currentDiagram.targets.length * 100;
+  const completedCount = currentDiagram.targets.filter(
+    (t) => guessedParts[t.number] || revealedParts[t.number]
+  ).length;
+  const allPartsCompleted = completedCount === currentDiagram.targets.length;
+  const currentBestPR = Math.max(score, prRecords[currentDiagram.id] ?? 0);
+
+  // ---------------------------------------------------------------------------
+  // VIEW 2: RESULTS / PR SUMMARY FOR THIS ANIMAL
+  // ---------------------------------------------------------------------------
+  if (isMatchFinished) {
+    return (
+      <div className="min-h-screen bg-white flex flex-col justify-center items-center p-4 sm:p-6 text-slate-900 font-sans">
+        <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-sm">
+          <div className="text-center mb-6">
+            <div className="w-14 h-14 bg-blue-50 border border-blue-200 rounded-2xl flex items-center justify-center mx-auto mb-3">
+              <Trophy className="w-7 h-7 text-blue-600" />
+            </div>
+            <h2 className="text-2xl font-black text-slate-900">
+              {currentDiagram.organismGroup}
+            </h2>
+            {isNewPR && (
+              <span className="mt-2 inline-block px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-black uppercase tracking-wider">
+                ¡Nuevo Récord Personal (PR)!
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="p-4 rounded-xl bg-blue-50 border border-blue-100 text-center">
+              <div className="text-xs uppercase font-bold text-blue-600">
+                Puntaje Partida
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-blue-700 mt-1 font-mono">
+                {score}
+              </div>
+              <div className="text-xs text-blue-600/80 font-mono">
+                / {maxDiagramScore} pts
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100 text-center">
+              <div className="text-xs uppercase font-bold text-emerald-600">
+                Mejor PR
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-emerald-700 mt-1 font-mono">
+                {currentBestPR}
+              </div>
+              <div className="text-xs text-emerald-600/80 font-mono">
+                / {maxDiagramScore} pts
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2.5">
+            <button
+              onClick={() => startDiagramMatch(currentDiagram.id)}
+              className="w-full py-3.5 px-5 bg-[#2563EB] hover:bg-blue-700 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>Volver a jugar</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setSelectedDiagramId(null);
+                setIsMatchFinished(false);
+              }}
+              className="w-full py-3.5 px-5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl transition-colors"
+            >
+              Volver a la lista de animales
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // VIEW 3: INDIVIDUAL ANIMAL MATCH
+  // ---------------------------------------------------------------------------
   return (
     <div className="min-h-screen bg-white text-slate-900 flex flex-col font-sans">
       {/* Mini sticky photo top-left on scroll */}
@@ -334,7 +541,7 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
           <div
             onClick={() => setIsThumbnailExpanded(true)}
             className="group relative cursor-pointer bg-white p-1 rounded-xl shadow-lg border border-slate-200 hover:border-blue-500 transition-all"
-            title="Click para ampliar imagen"
+            title="Click para abrir pop-up con zoom"
           >
             <img
               src={currentDiagram.imageUrl}
@@ -351,84 +558,38 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
       {/* Top Header Navigation */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-xs border-b border-slate-200 px-3 sm:px-6 py-2.5">
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-2">
-          {/* Back button */}
+          {/* Back to animal list button */}
           <button
-            onClick={onBackToHome}
-            className="p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors flex items-center"
-            title="Volver al menú principal"
+            onClick={() => {
+              if (score > 0 || completedCount > 0) {
+                saveRecordIfBetter(currentDiagram.id, score);
+              }
+              setSelectedDiagramId(null);
+            }}
+            className="p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors flex items-center gap-1.5 font-bold text-xs sm:text-sm"
+            title="Volver a la lista de animales"
           >
             <ArrowLeft className="w-5 h-5" />
+            <span className="hidden sm:inline">Lista</span>
           </button>
 
-          {/* Diagram Selector Dropdown */}
-          <div ref={menuContainerRef} className="relative">
-            <button
-              onClick={() => setIsDiagramMenuOpen(!isDiagramMenuOpen)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-xs sm:text-sm font-bold text-slate-800 hover:bg-slate-200 transition-colors"
-            >
-              <span>{currentDiagram.organismGroup}</span>
-              <ChevronDown className="w-4 h-4 text-slate-500" />
-            </button>
-
-            {isDiagramMenuOpen && (
-              <div className="absolute left-1/2 -translate-x-1/2 mt-1.5 w-72 bg-white border border-slate-200 rounded-xl shadow-xl py-1 z-50 text-sm">
-                {ANATOMY_DIAGRAMS.map((diag, idx) => (
-                  <button
-                    key={diag.id}
-                    onClick={() => {
-                      setVisitedIndices((prev) => ({ ...prev, [idx]: true }));
-                      setCurrentIndex(idx);
-                      setIsDiagramMenuOpen(false);
-                    }}
-                    className={`w-full text-left px-3.5 py-2.5 hover:bg-slate-50 flex items-center justify-between ${
-                      currentIndex === idx
-                        ? 'bg-blue-50 text-blue-600 font-bold'
-                        : 'text-slate-700'
-                    }`}
-                  >
-                    <span>{diag.organismGroup}</span>
-                    {currentIndex === idx && (
-                      <Check className="w-4 h-4 text-blue-600 shrink-0" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
+          {/* Animal Name */}
+          <div className="text-xs sm:text-sm font-black text-slate-900 truncate px-2">
+            {currentDiagram.organismGroup}
           </div>
 
-          {/* Score & Arrows */}
-          <div className="flex items-center gap-2">
+          {/* Score & PR */}
+          <div className="flex items-center gap-2 shrink-0">
+            {prRecords[currentDiagram.id] !== undefined && (
+              <div className="hidden sm:flex items-center gap-1 px-2.5 py-1 bg-slate-100 border border-slate-200 rounded-full text-slate-700 font-mono font-bold text-xs">
+                <Trophy className="w-3.5 h-3.5 text-blue-600" />
+                <span>PR: {prRecords[currentDiagram.id]}</span>
+              </div>
+            )}
+
             <div className="flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-200 rounded-full text-blue-700 font-mono font-bold text-xs sm:text-sm">
               <span>{score} pts</span>
             </div>
-
-            {/* Previous Arrow (Only works if previous diagram was played) */}
-            <button
-              onClick={handlePrevDiagram}
-              disabled={!canGoPrev}
-              className={`p-2 rounded-lg border transition-colors ${
-                canGoPrev
-                  ? 'border-slate-200 text-slate-700 hover:bg-slate-100'
-                  : 'border-slate-100 text-slate-300 bg-slate-50 cursor-not-allowed'
-              }`}
-              title="Anterior"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-
-            {/* Next Arrow */}
-            <button
-              onClick={handleNextDiagram}
-              disabled={!canGoNext}
-              className={`p-2 rounded-lg transition-all flex items-center gap-1 ${
-                canGoNext
-                  ? 'bg-[#2563EB] hover:bg-blue-700 text-white'
-                  : 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed'
-              }`}
-              title="Siguiente"
-            >
-              <ArrowRight className="w-5 h-5" />
-            </button>
           </div>
         </div>
       </header>
@@ -442,33 +603,18 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
               {currentDiagram.organismGroup}
             </h2>
             <span className="text-xs sm:text-sm font-mono font-bold text-slate-500">
-              {
-                currentDiagram.targets.filter(
-                  (t) => guessedParts[t.number] || revealedParts[t.number]
-                ).length
-              }{' '}
-              / {currentDiagram.targets.length}
+              {completedCount} / {currentDiagram.targets.length}
             </span>
           </div>
 
-          {/* Diagram Image Area */}
-          <div
-            ref={diagramImageRef}
-            className="relative bg-white flex items-center justify-center overflow-hidden min-h-[280px] max-h-[500px] p-2 sm:p-4 border-b border-slate-200"
-          >
-            <img
+          {/* Diagram Image Area with Inline Zoom & Pan */}
+          <div ref={diagramImageRef}>
+            <InlineZoomableImage
               src={currentDiagram.imageUrl}
               alt={currentDiagram.title}
-              className="w-full h-auto max-h-[470px] object-contain select-none"
+              darkBg={false}
+              onOpenPopup={() => setIsThumbnailExpanded(true)}
             />
-
-            <button
-              onClick={() => setIsThumbnailExpanded(true)}
-              className="absolute bottom-3 right-3 p-2 bg-slate-900/75 hover:bg-slate-900 text-white rounded-xl backdrop-blur-xs transition-colors"
-              title="Ampliar diagrama"
-            >
-              <Maximize2 className="w-4 h-4" />
-            </button>
           </div>
 
           {/* Top General Predictive Input Bar */}
@@ -654,59 +800,56 @@ export function OrganIdentifierView({ onBackToHome }: OrganIdentifierViewProps) 
           </div>
         </div>
 
-        {/* Bottom Navigation Bar */}
-        <div className="flex items-center justify-between py-4 border-t border-slate-200">
+        {/* Bottom Actions Bar */}
+        <div className="flex items-center justify-between py-4 border-t border-slate-200 gap-3">
           <button
-            onClick={handlePrevDiagram}
-            disabled={!canGoPrev}
-            className={`p-3 rounded-xl border font-bold transition-colors flex items-center justify-center ${
-              canGoPrev
-                ? 'border-slate-200 text-slate-700 hover:bg-slate-100'
-                : 'border-slate-100 text-slate-300 bg-slate-50 cursor-not-allowed'
-            }`}
-            title="Anterior"
+            onClick={() => {
+              if (score > 0 || completedCount > 0) {
+                saveRecordIfBetter(currentDiagram.id, score);
+              }
+              setSelectedDiagramId(null);
+            }}
+            className="px-4 py-3 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-sm sm:text-base transition-colors flex items-center gap-2"
           >
-            <ArrowLeft className="w-6 h-6" />
+            <ArrowLeft className="w-5 h-5" />
+            <span>Volver a la lista</span>
           </button>
 
-          <button
-            onClick={handleNextDiagram}
-            disabled={!canGoNext}
-            className={`px-6 py-3.5 rounded-xl font-bold text-base transition-all flex items-center gap-2 ${
-              canGoNext
-                ? 'bg-[#2563EB] hover:bg-blue-700 text-white'
-                : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
-            }`}
-          >
-            <span>Siguiente</span>
-            <ArrowRight className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => startDiagramMatch(currentDiagram.id)}
+              className="px-4 py-3 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-sm sm:text-base transition-colors flex items-center gap-1.5"
+              title="Reiniciar partida de este animal"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span className="hidden sm:inline">Reiniciar</span>
+            </button>
+
+            <button
+              onClick={() => finishCurrentMatch(score)}
+              className={`px-6 py-3 rounded-xl font-bold text-sm sm:text-base transition-all flex items-center gap-2 ${
+                allPartsCompleted
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
+                  : 'bg-[#2563EB] hover:bg-blue-700 text-white'
+              }`}
+            >
+              <Trophy className="w-4 h-4" />
+              <span>
+                {allPartsCompleted ? 'Ver resultado y PR' : 'Finalizar partida'}
+              </span>
+            </button>
+          </div>
         </div>
       </main>
 
-      {/* Expanded Diagram Lightbox Modal */}
+      {/* Floating Draggable & Zoomable Diagram Pop-up */}
       {isThumbnailExpanded && currentDiagram.imageUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setIsThumbnailExpanded(false)}
-        >
-          <div
-            className="relative max-w-5xl max-h-[92vh] bg-white rounded-2xl overflow-hidden border border-slate-300 flex flex-col items-center p-2"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={() => setIsThumbnailExpanded(false)}
-              className="absolute top-3 right-3 p-2 bg-slate-900/75 hover:bg-slate-900 text-white rounded-xl z-10 transition-colors"
-            >
-              <X className="w-6 h-6" />
-            </button>
-            <img
-              src={currentDiagram.imageUrl}
-              alt={currentDiagram.title}
-              className="max-h-[88vh] max-w-full object-contain"
-            />
-          </div>
-        </div>
+        <FloatingZoomPopup
+          src={currentDiagram.imageUrl}
+          title={currentDiagram.organismGroup}
+          darkBg={false}
+          onClose={() => setIsThumbnailExpanded(false)}
+        />
       )}
     </div>
   );
